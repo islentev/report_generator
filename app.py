@@ -80,25 +80,41 @@ if uploaded_file:
         q1 = st.text_input("Фактическое число участников")
         q2 = st.text_input("Реквизиты письма согласования")
         
-        # Кнопка внутри формы только ЗАПУСКАЕТ процесс
         submitted = st.form_submit_button("Сформировать отчет")
         
         if submitted:
             with st.spinner("DeepSeek пишет отчет в прошедшем времени..."):
-                # ... ваш код генерации через DeepSeek ...
+                # 1. Формируем промпт
+                prompt_text = f"""Перепиши условия этого контракта в прошедшее время для отчета.
+                Контракт: {contract_text[:3000]}
+                Эталонная структура: {selected_etalon.get('ЭТАЛОННАЯ СТРУКТУРА', 'Стандартная')}
+                Доп. данные: Участников - {q1}, Письмо - {q2}"""
                 
-                # Собираем документ
-                out_doc = Document()
-                out_doc.add_heading(f"Отчет по проекту: {selected_etalon.get('Тип проекта')}", 0)
-                out_doc.add_paragraph(res.choices[0].message.content)
+                # 2. Делаем запрос к ИИ (сохраняем в res)
+                try:
+                    res = client_ai.chat.completions.create(
+                        model="deepseek-chat",
+                        messages=[{"role": "user", "content": prompt_text}]
+                    )
+                    
+                    # 3. Вытаскиваем текст из ответа
+                    report_content = res.choices[0].message.content
+                    
+                    # 4. Создаем Word-файл
+                    out_doc = Document()
+                    out_doc.add_heading(f"Отчет по проекту: {selected_etalon.get('Тип проекта', 'Новый проект')}", 0)
+                    out_doc.add_paragraph(report_content)
+                    
+                    # 5. Сохраняем в буфер и в сессию
+                    buffer = io.BytesIO()
+                    out_doc.save(buffer)
+                    st.session_state['report_buffer'] = buffer.getvalue()
+                    st.success("Отчет успешно сформирован! Кнопка скачивания появилась под формой.")
                 
-                buffer = io.BytesIO()
-                out_doc.save(buffer)
-                # Сохраняем результат в session_state, чтобы он не пропал при перезагрузке страницы
-                st.session_state['report_buffer'] = buffer.getvalue()
-                st.success("Отчет успешно сформирован!")
+                except Exception as ai_err:
+                    st.error(f"Ошибка при работе с ИИ: {ai_err}")
 
-    # КНОПКА СКАЧИВАНИЯ — ТЕПЕРЬ ВНЕ ФОРМЫ
+    # КНОПКА СКАЧИВАНИЯ (ВНЕ ФОРМЫ)
     if 'report_buffer' in st.session_state:
         st.download_button(
             label="📥 Скачать готовый Отчет (.docx)",
@@ -106,6 +122,3 @@ if uploaded_file:
             file_name="Report.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
-
-
-
