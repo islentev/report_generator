@@ -8,10 +8,12 @@ import io
 
 # --- 1. ЗАГРУЗКА СЕКРЕТОВ ИЗ ОБЛАКА ---
 try:
-    # Данные Google из раздела Secrets
-    gcp_info = st.secrets["gcp_service_account"]
-    # Исправляем переносы строк в ключе
-    gcp_info["private_key"] = gcp_info["private_key"].replace("\\n", "\n")
+    # Копируем данные из секретов в обычный словарь (dict), чтобы их можно было менять
+    gcp_info = dict(st.secrets["gcp_service_account"])
+    
+    # Теперь замена сработает, так как gcp_info — это обычный словарь
+    if "private_key" in gcp_info:
+        gcp_info["private_key"] = gcp_info["private_key"].replace("\\n", "\n")
     
     creds = Credentials.from_service_account_info(
         gcp_info, 
@@ -19,7 +21,7 @@ try:
     )
     gc = gspread.authorize(creds)
     
-    # Ключи API и ID таблицы из раздела Secrets
+    # Ключи API и ID таблицы
     DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
     SHEET_ID = st.secrets["SHEET_ID"]
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
@@ -87,3 +89,4 @@ if uploaded_file:
                 out_doc.save(buffer)
                 
                 st.download_button("📥 Скачать готовый Отчет (.docx)", buffer.getvalue(), "Report.docx")
+
