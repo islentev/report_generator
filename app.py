@@ -6,119 +6,101 @@ from docx import Document
 from openai import OpenAI
 import io
 
-# --- 1. ЗАГРУЗКА СЕКРЕТОВ ИЗ ОБЛАКА ---
-try:
-   # Копируем данные из секретов
-    gcp_info = dict(st.secrets["gcp_service_account"])
+# 1. Добавим функцию для отрисовки таблиц в Word (в начало файла к остальным функциям)
+def add_table_from_markdown(doc, markdown_text):
+    """Парсит Markdown таблицы от ИИ и создает реальные таблицы в Word"""
+    lines = [line.strip() for line in markdown_text.split('\n') if '|' in line]
+    if len(lines) < 3: return # Не таблица
     
-    if "private_key" in gcp_info:
-        # 1. Убираем лишние кавычки, если они случайно попали внутрь строки
-        raw_key = gcp_info["private_key"].strip('"').strip("'")
+    # Извлекаем заголовки и данные
+    headers = [cell.strip() for cell in lines[0].split('|') if cell.strip()]
+    table = doc.add_table(rows=1, cols=len(headers))
+    table.style = 'Table Grid'
+    hdr_cells = table.rows[0].cells
+    for i, h in enumerate(headers):
+        hdr_cells[i].text = h
         
-        # 2. Заменяем текстовые \n на реальные символы переноса строки
-        # И убираем возможные пробелы вокруг
-        gcp_info["private_key"] = raw_key.replace("\\n", "\n").strip()
+    for line in lines[2:]:
+        cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+        if len(cells) == len(headers):
+            row_cells = table.add_row().cells
+            for i, c in enumerate(cells):
+                row_cells[i].text = c
+
+# 2. ОСНОВНОЙ БЛОК ГЕНЕРАЦИИ (внутри if uploaded_file:)
+with st.form("interview"):
+    st.subheader("📝 Данные для наполнения отчета")
+    col1, col2 = st.columns(2)
+    with col1:
+        q1 = st.text_input("Итоговое количество участников (цифрой)", placeholder="Напр: 80")
+    with col2:
+        q2 = st.text_input("Реквизиты письма согласования", placeholder="Напр: №123 от 01.12.25")
     
-    # Теперь замена сработает, так как gcp_info — это обычный словарь
-    if "private_key" in gcp_info:
-        gcp_info["private_key"] = gcp_info["private_key"].replace("\\n", "\n")
-    
-    creds = Credentials.from_service_account_info(
-        gcp_info, 
-        scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    # САМОЕ ВАЖНОЕ: Поле для "мелочей"
+    additional_facts = st.text_area(
+        "Дополнительные факты реализации (для полноты)", 
+        help="Вставьте сюда даты заездов, адреса сбора, марки машин или меню. ИИ распределит это по разделам.",
+        placeholder="Напр: 2 группы по 40 чел. Заезды 8-9 и 10-11 декабря. Сбор в Реутове и Балашихе. Завтрак: каша 200г..."
     )
-    gc = gspread.authorize(creds)
     
-    # Ключи API и ID таблицы
-    DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
-    SHEET_ID = st.secrets["SHEET_ID"]
-    APP_PASSWORD = st.secrets["APP_PASSWORD"]
-    
-    # Инициализация DeepSeek
-    client_ai = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-except Exception as e:
-    st.error(f"Ошибка конфигурации: {e}")
-    st.stop()
+    submitted = st.form_submit_button("🔥 Сформировать профессиональный отчет")
 
-# --- 2. ЗАЩИТА ПАРОЛЕМ ---
-st.sidebar.title("🔐 Доступ")
-user_pass = st.sidebar.text_input("Введите пароль", type="password")
-if user_pass != APP_PASSWORD:
-    st.info("Введите пароль в боковой панели, чтобы начать работу.")
-    st.stop()
+    if submitted:
+        with st.spinner("Старший юрист DeepSeek анализирует контракт и факты..."):
+            
+            # СИСТЕМНАЯ УСТАНОВКА (Универсальная)
+            system_instruction = """Ты — ведущий юрист-аналитик. Твоя задача: на основе Контракта составить подробный ИНФОРМАЦИОННЫЙ ОТЧЕТ.
+            ПРАВИЛА:
+            1. ПРИНЦИП ЗЕРКАЛА: Опиши выполнение КАЖДОГО требования из ТЗ. Если в ТЗ указаны параметры оборудования или состав питания — перенеси их в отчет как выполненные.
+            2. ТРАНСФОРМАЦИЯ: Контракт "должен" -> Отчет "Исполнителем обеспечено/выполнено".
+            3. ТАБЛИЦЫ: Если в ТЗ есть списки характеристик, меню или графики — ОБЯЗАТЕЛЬНО оформляй их в виде Markdown-таблиц.
+            4. ПОЛНОТА: Не сокращай! Используй юридические термины, ГОСТы и СанПиНы из текста контракта.
+            5. СТРУКТУРА: Информационная справка -> Предмет -> Сроки -> Объем -> Содержательная часть (по разделам ТЗ) -> Качество (ГОСТы) -> Приложения."""
 
-# --- 3. ЛОГИКА ПРИЛОЖЕНИЯ ---
-st.title("🤖 Генератор отчетов по госконтрактам")
+            # ТЕКСТ ЗАПРОСА
+            prompt_text = f"""
+            КОНТРАКТ (ТЗ): {contract_text[:5000]}
+            
+            ФАКТЫ ИЗ ИНТЕРВЬЮ: 
+            - Участников: {q1}
+            - Письмо: {q2}
+            - Доп. детали: {additional_facts}
+            
+            ЗАДАНИЕ: Напиши полный текст отчета. Для разделов с характеристиками (Техника, Питание, Транспорт) используй таблицы."""
 
-try:
-    sheet = gc.open_by_key(SHEET_ID).sheet1
-    data = pd.DataFrame(sheet.get_all_records())
-    st.success("База эталонов подключена!")
-except Exception as e:
-    st.error(f"Не удалось прочитать таблицу: {e}")
-    st.stop()
-
-uploaded_file = st.file_uploader("Загрузите Контракт (DOCX)", type=["docx"])
-
-if uploaded_file:
-    # Читаем DOCX
-    doc = Document(uploaded_file)
-    contract_text = "\n".join([p.text for p in doc.paragraphs])
-    
-    # Выбор эталона (например, первый)
-    selected_etalon = data.iloc[0]
-    st.info(f"Выбран эталон: {selected_etalon.get('Тип проекта')}")
-
-    # Создаем пустое место для хранения документа
-report_data = None
-
-if uploaded_file:
-    # ... ваш код чтения DOCX ...
-    
-    with st.form("interview"):
-        st.subheader("Уточнение деталей")
-        q1 = st.text_input("Фактическое число участников")
-        q2 = st.text_input("Реквизиты письма согласования")
-        
-        submitted = st.form_submit_button("Сформировать отчет")
-        
-        if submitted:
-            with st.spinner("DeepSeek пишет отчет в прошедшем времени..."):
-                # 1. Формируем промпт
-                prompt_text = f"""Перепиши условия этого контракта в прошедшее время для отчета.
-                Контракт: {contract_text[:3000]}
-                Эталонная структура: {selected_etalon.get('ЭТАЛОННАЯ СТРУКТУРА', 'Стандартная')}
-                Доп. данные: Участников - {q1}, Письмо - {q2}"""
+            try:
+                res = client_ai.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": system_instruction},
+                        {"role": "user", "content": prompt_text}
+                    ]
+                )
                 
-                # 2. Делаем запрос к ИИ (сохраняем в res)
-                try:
-                    res = client_ai.chat.completions.create(
-                        model="deepseek-chat",
-                        messages=[{"role": "user", "content": prompt_text}]
-                    )
-                    
-                    # 3. Вытаскиваем текст из ответа
-                    report_content = res.choices[0].message.content
-                    
-                    # 4. Создаем Word-файл
-                    out_doc = Document()
-                    out_doc.add_heading(f"Отчет по проекту: {selected_etalon.get('Тип проекта', 'Новый проект')}", 0)
-                    out_doc.add_paragraph(report_content)
-                    
-                    # 5. Сохраняем в буфер и в сессию
-                    buffer = io.BytesIO()
-                    out_doc.save(buffer)
-                    st.session_state['report_buffer'] = buffer.getvalue()
-                    st.success("Отчет успешно сформирован! Кнопка скачивания появилась под формой.")
+                report_content = res.choices[0].message.content
                 
-                except Exception as ai_err:
-                    st.error(f"Ошибка при работе с ИИ: {ai_err}")
+                # СОЗДАНИЕ ДОКУМЕНТА
+                out_doc = Document()
+                # Разделяем текст на блоки, чтобы найти таблицы
+                blocks = report_content.split('\n\n')
+                
+                for block in blocks:
+                    if '|' in block and '-|-' in block: # Это таблица
+                        add_table_from_markdown(out_doc, block)
+                    else:
+                        if block.startswith('#'): # Это заголовок
+                            out_doc.add_heading(block.replace('#', '').strip(), level=2)
+                        else:
+                            out_doc.add_paragraph(block)
+                
+                buffer = io.BytesIO()
+                out_doc.save(buffer)
+                st.session_state['report_buffer'] = buffer.getvalue()
+                st.success("Отчет сформирован с учетом всех технических деталей!")
 
-    # КНОПКА СКАЧИВАНИЯ (ВНЕ ФОРМЫ)
-    if 'report_buffer' in st.session_state:
-        st.download_button(
-            label="📥 Скачать готовый Отчет (.docx)",
-            data=st.session_state['report_buffer'],
-            file_name="Report.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+            except Exception as e:
+                st.error(f"Ошибка ИИ: {e}")
+
+# КНОПКА СКАЧИВАНИЯ (ВНЕ ФОРМЫ)
+if 'report_buffer' in st.session_state:
+    st.download_button("📥 Скачать готовый Отчет (.docx)", st.session_state['report_buffer'], "Final_Report.docx")
