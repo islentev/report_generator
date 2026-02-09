@@ -69,33 +69,43 @@ if uploaded_file:
     selected_etalon = data.iloc[0]
     st.info(f"Выбран эталон: {selected_etalon.get('Тип проекта')}")
 
+    # Создаем пустое место для хранения документа
+report_data = None
+
+if uploaded_file:
+    # ... ваш код чтения DOCX ...
+    
     with st.form("interview"):
         st.subheader("Уточнение деталей")
         q1 = st.text_input("Фактическое число участников")
         q2 = st.text_input("Реквизиты письма согласования")
         
-        if st.form_submit_button("Сгенерировать отчет"):
+        # Кнопка внутри формы только ЗАПУСКАЕТ процесс
+        submitted = st.form_submit_button("Сформировать отчет")
+        
+        if submitted:
             with st.spinner("DeepSeek пишет отчет в прошедшем времени..."):
+                # ... ваш код генерации через DeepSeek ...
                 
-                # Промпт для DeepSeek
-                prompt = f"""Перепиши условия этого контракта в прошедшее время для отчета.
-                Контракт: {contract_text[:3000]}
-                Эталонная структура: {selected_etalon.get('ЭТАЛОННАЯ СТРУКТУРА')}
-                Доп. данные: {q1}, {q2}"""
-                
-                res = client_ai.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                
-                # Создаем файл
+                # Собираем документ
                 out_doc = Document()
                 out_doc.add_heading(f"Отчет по проекту: {selected_etalon.get('Тип проекта')}", 0)
                 out_doc.add_paragraph(res.choices[0].message.content)
                 
                 buffer = io.BytesIO()
                 out_doc.save(buffer)
-                
-                st.download_button("📥 Скачать готовый Отчет (.docx)", buffer.getvalue(), "Report.docx")
+                # Сохраняем результат в session_state, чтобы он не пропал при перезагрузке страницы
+                st.session_state['report_buffer'] = buffer.getvalue()
+                st.success("Отчет успешно сформирован!")
+
+    # КНОПКА СКАЧИВАНИЯ — ТЕПЕРЬ ВНЕ ФОРМЫ
+    if 'report_buffer' in st.session_state:
+        st.download_button(
+            label="📥 Скачать готовый Отчет (.docx)",
+            data=st.session_state['report_buffer'],
+            file_name="Report.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
 
 
