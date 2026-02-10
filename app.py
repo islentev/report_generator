@@ -149,5 +149,15 @@ if uploaded_file:
                 final_doc.save(buf)
                 st.session_state['report_buffer'] = buf.getvalue()
                 st.success("Отчет готов!")
+                
+            except Exception as e:
+                st.error(f"Ошибка ИИ: {e}")
 
+# ВАЖНО: Эта кнопка должна стоять БЕЗ отступа относительно "if uploaded_file"
 if 'report_buffer' in st.session_state:
+    st.download_button(
+        label="📥 Скачать Отчет .docx", 
+        data=st.session_state['report_buffer'], 
+        file_name="Report_Legal.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
