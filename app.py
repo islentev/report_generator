@@ -12,7 +12,6 @@ import json
 # --- 1. НАСТРОЙКА И ПАМЯТЬ ---
 st.set_page_config(page_title="Генератор Отчетов PRO", layout="wide")
 
-# Инициализируем хранилище, чтобы данные не пропадали при обновлении страницы
 if 'report_buffer' not in st.session_state:
     st.session_state['report_buffer'] = None
 if 'title_info' not in st.session_state:
@@ -45,7 +44,7 @@ def add_table_from_markdown(doc, markdown_text):
     hdr_cells = table.rows[0].cells
     for i, h in enumerate(headers): hdr_cells[i].text = h
     for line in lines[2:]:
-        cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+        cells = [cell.strip() for line in line.split('|') if (cell := line.strip())]
         if len(cells) >= len(headers):
             row_cells = table.add_row().cells
             for i in range(len(headers)): row_cells[i].text = cells[i]
@@ -99,26 +98,30 @@ ________________ / {title_data.get('director', '_________')}
 # --- 4. ОСНОВНОЙ ИНТЕРФЕЙС ---
 user_pass = st.sidebar.text_input("Пароль", type="password")
 if user_pass != APP_PASSWORD:
-    st.info("Введите пароль доступа.")
+    st.info("Введите пароль.")
     st.stop()
 
 # Загрузка базы эталонов
-sheet = gc.open_by_key(SHEET_ID).sheet1
-df_etalons = pd.DataFrame(sheet.get_all_records())
+try:
+    sheet = gc.open_by_key(SHEET_ID).sheet1
+    df_etalons = pd.DataFrame(sheet.get_all_records())
+except Exception as e:
+    st.error(f"Ошибка Google Таблицы: {e}")
+    st.stop()
 
-st.title("⚖️ Юридический генератор (Анализ Форм)")
-uploaded_file = st.file_uploader("Загрузите Контракт", type="docx")
+st.title("⚖️ Юридический генератор отчетов")
+uploaded_file = st.file_uploader("Загрузите файл Контракта (docx)", type="docx")
 
 if uploaded_file:
     contract_text = "\n".join([p.text for p in Document(uploaded_file).paragraphs])
     
-    # ЭТАП 1: Извлечение реквизитов (делаем один раз)
+    # ЭТАП 1: Распознавание реквизитов
     if not st.session_state['title_info']:
-        with st.spinner("Анализирую стороны и реквизиты..."):
+        with st.spinner("Извлекаю реквизиты из контракта..."):
             all_types = df_etalons["Тип проекта"].tolist()
             extraction_prompt = f"""Анализируй контракт: {contract_text[:5000]}
-            Выдай JSON:
-            {{ "company": "Исполнитель", "director": "Директор", "contract_no": "№", "contract_date": "дата", "project_name": "предмет", "type": "тип из {all_types}" }}"""
+            Выдай ответ строго в JSON:
+            {{ "company": "Название компании", "director": "ФИО директора", "contract_no": "№", "contract_date": "дата", "project_name": "предмет", "type": "тип из списка {all_types}" }}"""
             
             res_meta = client_ai.chat.completions.create(
                 model="deepseek-chat",
@@ -128,60 +131,59 @@ if uploaded_file:
             st.session_state['title_info'] = json.loads(res_meta.choices[0].message.content)
 
     meta = st.session_state['title_info']
-    st.info(f"📋 Контракт: {meta['contract_no']} | Исполнитель: {meta['company']}")
+    st.success(f"Распознано: {meta['company']} | {meta['director']}")
 
     with st.form("data_form"):
         col1, col2 = st.columns(2)
         q1 = col1.text_input("Кол-во участников", value="100")
-        q2 = col2.text_input("Письмо согласования", placeholder="№1 от 01.12.25")
-        facts = st.text_area("Дополнительные факты реализации")
-        submitted = st.form_submit_button("🔥 Сформировать отчет")
+        q2 = col2.text_input("Письмо согласования", placeholder="№123 от 01.12.25")
+        facts = st.text_area("Доп. детали реализации (меню, даты, адреса)")
+        submitted = st.form_submit_button("🔥 Сгенерировать отчет")
 
     if submitted:
-        with st.spinner("Проверка наличия утвержденной формы и генерация..."):
+        with st.spinner("Генерация документа..."):
             try:
                 # Поиск формы в контракте
-                search_prompt = f"Найди в тексте Приложение с 'Формой отчета': {contract_text[-15000:]}. Если есть, опиши структуру. Если нет - напиши 'НЕТ'."
+                search_prompt = f"Найди в тексте Приложение с формой или образцом отчета: {contract_text[-15000:]}. Если есть - опиши её структуру. Если нет - напиши 'НЕТ'."
                 form_check = client_ai.chat.completions.create(
                     model="deepseek-chat",
                     messages=[{"role": "user", "content": search_prompt}]
                 )
                 contract_form = form_check.choices[0].message.content
 
-                # Выбор структуры
+                # Определение структуры (используем "Техническое описание" вместо "Эталонная структура")
                 if "НЕТ" not in contract_form.upper():
                     st.write("✅ Используется форма из приложения к контракту.")
                     struct_instr = f"Строго следуй форме из контракта: {contract_form}"
                 else:
                     selected_row = df_etalons[df_etalons["Тип проекта"] == meta['type']].iloc[0]
-                    struct_instr = f"Используй эталонную структуру: {selected_row['ЭТАЛОННАЯ СТРУКТУРА']}"
+                    # ПОПРАВКА ТУТ: берем данные из вашего столбца "Техническое описание"
+                    struct_instr = f"Используй эталонную структуру из технического описания: {selected_row['Техническое описание']}"
 
-                # Финальный текст
-                sys_msg = f"Ты юрист. Напиши отчет. {struct_instr}. Реквизиты: {meta}. Все пункты ТЗ - выполнены."
-                user_msg = f"ТЗ: {contract_text[:8000]}\nДанные: участников {q1}, письмо {q2}, факты: {facts}"
+                # Генерация текста
+                sys_msg = f"Ты опытный юрист. Напиши отчет в прошедшем времени. {struct_instr}. Отрази все требования ТЗ как выполненные."
+                user_msg = f"КОНТРАКТ: {contract_text[:8000]}\nУчастники: {q1}, Письмо: {q2}, Факты: {facts}"
                 
                 res = client_ai.chat.completions.create(
                     model="deepseek-chat",
                     messages=[{"role":"system","content":sys_msg}, {"role":"user","content":user_msg}]
                 )
                 
-                # Создание и сохранение в сессию
+                # Сохранение
                 final_doc = create_report_docx(res.choices[0].message.content, meta)
                 buf = io.BytesIO()
                 final_doc.save(buf)
                 st.session_state['report_buffer'] = buf.getvalue()
-                st.success("Документ готов к скачиванию!")
 
             except Exception as e:
                 st.error(f"Ошибка: {e}")
 
-# --- 5. ВЫВОД КНОПКИ СКАЧИВАНИЯ (ВНЕ ВСЕХ УСЛОВИЙ) ---
-if st.session_state['report_buffer'] is not None:
+# --- 5. ВЫВОД КНОПКИ СКАЧИВАНИЯ ---
+if st.session_state['report_buffer']:
     st.divider()
-    st.subheader("📥 Результат")
     st.download_button(
-        label="Скачать готовый Отчет (.docx)",
+        label="📥 Скачать готовый Отчет (.docx)",
         data=st.session_state['report_buffer'],
-        file_name=f"Report_{meta.get('contract_no', 'final')}.docx",
+        file_name=f"Report_{meta['contract_no']}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
