@@ -8,9 +8,10 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from openai import OpenAI
 import io
 import json
+import re
 
 # --- 1. НАСТРОЙКА ---
-st.set_page_config(page_title="Универсальный Генератор", layout="wide")
+st.set_page_config(page_title="Юридический Генератор", layout="wide")
 
 if 'report_buffer' not in st.session_state: st.session_state['report_buffer'] = None
 if 'title_info' not in st.session_state: st.session_state['title_info'] = None
@@ -24,7 +25,7 @@ try:
 except Exception as e:
     st.error(f"Ошибка конфига: {e}"); st.stop()
 
-# --- 3. УНИВЕРСАЛЬНАЯ ФУНКЦИЯ СОЗДАНИЯ DOCX ---
+# --- 3. ФУНКЦИЯ СОЗДАНИЯ DOCX ---
 def create_report_docx(report_content, title_data, requirements_list):
     doc = Document()
     
@@ -43,7 +44,7 @@ def create_report_docx(report_content, title_data, requirements_list):
 
     doc.add_page_break()
 
-    # СТРАНИЦА 2: ОТЧЕТ ПО ТЗ
+    # ОТЧЕТ ПО ТЗ
     doc.add_heading('ОТЧЕТ О ВЫПОЛНЕНИИ ТЕХНИЧЕСКОГО ЗАДАНИЯ', level=1)
     for block in report_content.split('\n\n'):
         p = doc.add_paragraph()
@@ -53,39 +54,38 @@ def create_report_docx(report_content, title_data, requirements_list):
             
     doc.add_page_break()
 
-    # СТРАНИЦА 3: ТРЕБОВАНИЯ К ДОКУМЕНТАЦИИ (ЧЕК-ЛИСТ)
+    # ЧЕК-ЛИСТ ДОКУМЕНТОВ
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
-    doc.add_paragraph("Ниже представлен перечень документов, обязательных к предоставлению Заказчику согласно условиям Контракта:")
     p_req = doc.add_paragraph()
     p_req.add_run(requirements_list)
     
-    # ФИНАЛЬНАЯ ПОДПИСЬ
+    # ПОДПИСЬ
     p_sign = doc.add_paragraph()
     p_sign.add_run(f"\n\nДиректор {title_data.get('company', '')}  _________________ / {title_data.get('director', '')}")
 
     return doc
 
-# --- 4. ОСНОВНОЙ ПРОЦЕСС ---
+# --- 4. ОСНОВНОЙ ИНТЕРФЕЙС ---
 user_pass = st.sidebar.text_input("Пароль", type="password")
 if user_pass != APP_PASSWORD: st.stop()
 
 uploaded_file = st.file_uploader("Загрузите контракт", type="docx")
 
 if uploaded_file:
-    # Очистка памяти при смене файла
     if 'last_file' not in st.session_state or st.session_state.last_file != uploaded_file.name:
         st.session_state.title_info = None
+        st.session_state.report_buffer = None
         st.session_state.last_file = uploaded_file.name
 
     doc_obj = Document(uploaded_file)
     full_text = "\n".join([p.text for p in doc_obj.paragraphs])
     
-    # 1. Распознавание реквизитов (берем начало файла)
+    # 1. Распознавание реквизитов (первые 3к символов)
     if not st.session_state['title_info']:
-        with st.spinner("Анализ сторон и реквизитов..."):
+        with st.spinner("Извлечение реквизитов из начала документа..."):
             res = client_ai.chat.completions.create(
                 model="deepseek-chat",
-                messages=[{"role": "user", "content": f"Найди Исполнителя, Директора, Номер и Предмет контракта в тексте: {full_text[:10000]}. Выдай JSON."}],
+                messages=[{"role": "user", "content": f"Найди Исполнителя, Директора, Номер и Предмет контракта в тексте: {full_text[:3000]}. Выдай JSON."}],
                 response_format={ 'type': 'json_object' }
             )
             st.session_state['title_info'] = json.loads(res.choices[0].message.content)
@@ -95,56 +95,41 @@ if uploaded_file:
 
     with st.form("main_form"):
         facts = st.text_area("Фактические детали выполнения (даты, количество и т.д.)")
-        if st.form_submit_button("Сформировать универсальный отчет"):
-            with st.spinner("Точечный анализ: Реквизиты + ТЗ..."):
-            # 1. Выделяем фрагменты текста, чтобы не «кормить» ИИ лишним
-            head_text = full_text[:10000]  # Первые страницы для реквизитов
-            
-            # Ищем начало ТЗ по ключевым словам
-            tz_start_keywords = ["Приложение №", "Техническое задание", "Описание объекта закупки", "ТЕХНИЧЕСКОЕ ЗАДАНИЕ"]
-            tz_index = -1
-            for kw in tz_start_keywords:
-                found = full_text.find(kw)
-                if found != -1 and (tz_index == -1 or found < tz_index):
-                    tz_index = found
-            
-            # Если ТЗ найдено, берем текст от его начала и до конца
-            if tz_index != -1:
-                clean_tz_text = full_text[tz_index:]
-            else:
-                clean_tz_text = full_text[-30000:] # Резерв: берем хвост, если ключевики не сработали
-            
-            # 2. Извлекаем требования к документам из этого же куска ТЗ
-            req_prompt = f"Найди в ТЗ требования к отчетности. Выпиши только список документов. ТЕКСТ: {clean_tz_text[:15000]}"
-            req_res = client_ai.chat.completions.create(model="deepseek-chat", messages=[{"role": "user", "content": req_prompt}])
-            req_list = req_res.choices[0].message.content
-
-            # 3. Пишем отчет СТРОГО ПО ПУНКТАМ ТЗ
-            report_prompt = f"""Используя фрагмент ТЗ ниже, напиши отчет. 
-            Действуй строго по пунктам ТЗ. Описывай только то, что есть в тексте ТЗ.
-            
-            ТРЕБОВАНИЯ:
-            - Замени будущее время на прошедшее ('организовать' -> 'организовано').
-            - Сохраняй все цифры, названия стран (Саудовская Аравия, Китай и т.д.) и объемы.
-            - ЕСЛИ ИНФОРМАЦИИ НЕТ В ТЗ — НЕ ПРИДУМЫВАЙ ЕЁ.
-            - Используй доп. факты: {facts}
-
-            ФРАГМЕНТ ТЗ ДЛЯ РАБОТЫ:
-            {clean_tz_text}"""
-            
-            report_res = client_ai.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": "Ты — юридический ассистент, который пишет отчеты строго по предоставленному ТЗ без галлюцинаций."},
-                          {"role": "user", "content": report_prompt}]
-            )
-            
-            # Формируем итоговый DOCX
-            doc_final = create_report_docx(report_res.choices[0].message.content, meta, req_list)
-            buf = io.BytesIO()
-            doc_final.save(buf)
-            st.session_state['report_buffer'] = buf.getvalue()
+        if st.form_submit_button("Сгенерировать отчет"):
+            with st.spinner("Точечный анализ ТЗ..."):
+                
+                # Поиск начала ТЗ
+                tz_start_keywords = ["Приложение №", "Техническое задание", "Описание объекта закупки"]
+                tz_index = -1
+                for kw in tz_start_keywords:
+                    found = full_text.find(kw)
+                    if found != -1 and (tz_index == -1 or found < tz_index): tz_index = found
+                
+                clean_tz = full_text[tz_index:] if tz_index != -1 else full_text[-30000:]
+                
+                # Требования к документации
+                req_res = client_ai.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": f"Найди требования к отчетности в этом тексте ТЗ: {clean_tz[:15000]}"}]
+                )
+                
+                # Отчет по пунктам ТЗ
+                report_res = client_ai.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": "Ты юрист. Пиши отчет строго по пунктам ТЗ. Галлюцинации и выдуманные факты запрещены."},
+                        {"role": "user", "content": f"Текст ТЗ: {clean_tz}. Доп. факты: {facts}. Напиши отчет в прошедшем времени."}
+                    ]
+                )
+                
+                doc_final = create_report_docx(report_res.choices[0].message.content, meta, req_res.choices[0].message.content)
+                buf = io.BytesIO()
+                doc_final.save(buf)
+                st.session_state['report_buffer'] = buf.getvalue()
 
 if st.session_state['report_buffer']:
-    st.download_button("📥 Скачать Отчет", st.session_state['report_buffer'], "Report_Universal.docx")
-
-
+    # Очистка номера контракта для имени файла
+    c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
+    file_name = f"отчет и № {c_no}.docx" if c_no else "отчет.docx"
+    
+    st.download_button("📥 Скачать готовый отчет", st.session_state['report_buffer'], file_name)
