@@ -66,79 +66,81 @@ def create_report_docx(report_content, title_data, requirements_list):
 
     return doc
 
-    # --- ОСНОВНОЙ БЛОК ЛОГИКИ ---
-    if uploaded_file:
-        if 'last_file' not in st.session_state or st.session_state.last_file != uploaded_file.name:
-            st.session_state.title_info = None
-            st.session_state.report_buffer = None
-            st.session_state.last_file = uploaded_file.name
+# --- 4. ОСНОВНОЙ БЛОК ЛОГИКИ (ТЕПЕРЬ БЕЗ ЛИШНИХ ОТСТУПОВ) ---
+user_pass = st.sidebar.text_input("Пароль", type="password")
+if user_pass != APP_PASSWORD: st.stop()
+
+uploaded_file = st.file_uploader("Загрузите контракт (DOCX)", type="docx")
+
+if uploaded_file:
+    if 'last_file' not in st.session_state or st.session_state.last_file != uploaded_file.name:
+        st.session_state.title_info = None
+        st.session_state.report_buffer = None
+        st.session_state.last_file = uploaded_file.name
+
+    doc_obj = Document(uploaded_file)
+    full_text = "\n".join([p.text for p in doc_obj.paragraphs])
     
-        doc_obj = Document(uploaded_file)
-        full_text = "\n".join([p.text for p in doc_obj.paragraphs])
-        
-        # 1. Распознавание реквизитов (первые 3к символов)
-        if not st.session_state['title_info']:
-            with st.spinner("Извлечение реквизитов из начала документа..."):
-                res = client_ai.chat.completions.create(
+    # 1. Распознавание реквизитов (первые 3к символов)
+    if not st.session_state['title_info']:
+        with st.spinner("Извлечение реквизитов из начала документа..."):
+            res = client_ai.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": f"Найди Исполнителя, Директора, Номер и Предмет контракта в тексте: {full_text[:3000]}. Выдай JSON."}],
+                response_format={ 'type': 'json_object' }
+            )
+            st.session_state['title_info'] = json.loads(res.choices[0].message.content)
+
+    meta = st.session_state['title_info']
+    st.info(f"Объект: {meta.get('project_name', 'Не определен')}")
+
+    with st.form("main_form"):
+        facts = st.text_area("Фактические детали выполнения (даты, количество и т.д.)")
+        if st.form_submit_button("Сгенерировать отчет"):
+            with st.spinner("Точечный анализ: Реквизиты (3к) + ТЗ..."):
+                head_text = full_text[:3000] 
+                
+                # 2. Ищем ТЗ с конца документа
+                text_upper = full_text.upper()
+                tz_markers = ["ПРИЛОЖЕНИЕ № 1", "ТЕХНИЧЕСКОЕ ЗАДАНИЕ", "ОПИСАНИЕ ОБЪЕКТА ЗАКУПКИ"]
+                tz_index = -1
+                
+                for marker in tz_markers:
+                    found = text_upper.rfind(marker)
+                    if found != -1 and found > tz_index:
+                        tz_index = found
+                
+                clean_tz = full_text[tz_index:] if tz_index != -1 else full_text[-40000:]
+    
+                # 3. Написание отчета по ТЗ
+                report_res = client_ai.chat.completions.create(
                     model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"Найди Исполнителя, Директора, Номер и Предмет контракта в тексте: {full_text[:3000]}. Выдай JSON."}],
-                    response_format={ 'type': 'json_object' }
+                    messages=[
+                        {"role": "system", "content": "Ты технический эксперт. Твоя задача — описать выполнение УСЛУГ из ТЗ. Пиши только про мероприятия, застройку, персонал и логистику. Галлюцинации запрещены."},
+                        {"role": "user", "content": f"НАПИШИ ОТЧЕТ ПО ЭТОМУ ТЗ В ПРОШЕДШЕМ ВРЕМЕНИ: {clean_tz}. ФАКТЫ: {facts}"}
+                    ]
                 )
-                st.session_state['title_info'] = json.loads(res.choices[0].message.content)
-    
-        meta = st.session_state['title_info']
-        st.info(f"Объект: {meta.get('project_name', 'Не определен')}")
-    
-        with st.form("main_form"):
-            facts = st.text_area("Фактические детали выполнения (даты, количество и т.д.)")
-            if st.form_submit_button("Сгенерировать отчет"):
-                with st.spinner("Точечный анализ: Реквизиты (3к) + ТЗ..."):
-                    head_text = full_text[:3000] 
-                    
-                    # Поиск ТЗ с конца документа
-                    text_upper = full_text.upper()
-                    tz_markers = ["ПРИЛОЖЕНИЕ № 1", "ТЕХНИЧЕСКОЕ ЗАДАНИЕ", "ОПИСАНИЕ ОБЪЕКТА ЗАКУПКИ"]
-                    tz_index = -1
-                    
-                    for marker in tz_markers:
-                        found = text_upper.rfind(marker)
-                        if found != -1 and found > tz_index:
-                            tz_index = found
-                    
-                    clean_tz = full_text[tz_index:] if tz_index != -1 else full_text[-40000:]
-        
-                    # Написание отчета по ТЗ
-                    report_res = client_ai.chat.completions.create(
-                        model="deepseek-chat",
-                        messages=[
-                            {"role": "system", "content": "Ты технический эксперт. Твоя задача — описать выполнение УСЛУГ из ТЗ. Пиши только про мероприятия, застройку, персонал и логистику. Галлюцинации запрещены."},
-                            {"role": "user", "content": f"НАПИШИ ОТЧЕТ ПО ЭТОМУ ТЗ В ПРОШЕДШЕМ ВРЕМЕНИ: {clean_tz}. ФАКТЫ: {facts}"}
-                        ]
-                    )
-    
-                    # Поиск требований к документации
-                    req_prompt = f"""Внимательно изучи текст ТЗ и выпиши ВСЕ документы, которые Исполнитель обязан предоставить по итогам работ (Акты, фотоотчеты, видео и т.д.). ТЕКСТ ТЗ: {clean_tz}"""
-                    
-                    req_res = client_ai.chat.completions.create(
-                        model="deepseek-chat",
-                        messages=[{"role": "user", "content": req_prompt}]
-                    )
-                    
-                    # Создание документа
-                    doc_final = create_report_docx(
-                        report_res.choices[0].message.content, 
-                        meta, 
-                        req_res.choices[0].message.content
-                    )
-                    
-                    buf = io.BytesIO()
-                    doc_final.save(buf)
-                    st.session_state['report_buffer'] = buf.getvalue()
-    
-    # Кнопка скачивания с номером контракта
-    if st.session_state['report_buffer']:
-        c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
-        st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
-    
-    
-    
+
+                # 4. Поиск требований к документации
+                req_prompt = f"""Внимательно изучи текст ТЗ и выпиши ВСЕ документы, которые Исполнитель обязан предоставить по итогам работ (Акты, фотоотчеты, видео и т.д.). ТЕКСТ ТЗ: {clean_tz}"""
+                
+                req_res = client_ai.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": req_prompt}]
+                )
+                
+                # 5. Создание документа
+                doc_final = create_report_docx(
+                    report_res.choices[0].message.content, 
+                    meta, 
+                    req_res.choices[0].message.content
+                )
+                
+                buf = io.BytesIO()
+                doc_final.save(buf)
+                st.session_state['report_buffer'] = buf.getvalue()
+
+# Кнопка скачивания с номером контракта
+if st.session_state['report_buffer']:
+    c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
+    st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
