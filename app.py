@@ -3,33 +3,34 @@ import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
 from docx import Document
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from openai import OpenAI
 import io
 
 # --- 1. НАСТРОЙКА СТРАНИЦЫ ---
-st.set_page_config(page_title="Юридический Генератор Отчетов", layout="wide")
+st.set_page_config(page_title="Генератор Отчетов PRO", layout="wide")
 
-# --- 2. ПОДКЛЮЧЕНИЕ СЕКРЕТОВ И API ---
+# --- 2. ПОДКЛЮЧЕНИЕ СЕКРЕТОВ ---
 try:
-    # Google Sheets (для базы эталонов)
     gcp_info = dict(st.secrets["gcp_service_account"])
     gcp_info["private_key"] = gcp_info["private_key"].replace("\\n", "\n")
     creds = Credentials.from_service_account_info(gcp_info, scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'])
     gc = gspread.authorize(creds)
     
-    # DeepSeek
     DEEPSEEK_KEY = st.secrets["DEEPSEEK_API_KEY"].strip().strip('"')
     client_ai = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
     
     SHEET_ID = st.secrets["SHEET_ID"]
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
 except Exception as e:
-    st.error(f"Ошибка конфигурации секретов: {e}")
+    st.error(f"Ошибка конфигурации: {e}")
     st.stop()
 
-# --- 3. ФУНКЦИИ ---
+# --- 3. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
 def add_table_from_markdown(doc, markdown_text):
-    """Превращает Markdown-таблицу от ИИ в реальную таблицу Word"""
+    """Превращает Markdown-таблицу в таблицу Word"""
     lines = [line.strip() for line in markdown_text.split('\n') if '|' in line]
     if len(lines) < 3: return
     headers = [cell.strip() for cell in lines[0].split('|') if cell.strip()]
@@ -39,105 +40,114 @@ def add_table_from_markdown(doc, markdown_text):
     for i, h in enumerate(headers):
         hdr_cells[i].text = h
     for line in lines[2:]:
-        cells = [cell.strip() for cell in line.split('|') if cell.strip()]
-        if len(cells) == len(headers):
+        cells = [cell.strip() for line_part in line.split('|') if (cell := line_part.strip())]
+        if len(cells) >= len(headers):
             row_cells = table.add_row().cells
-            for i, c in enumerate(cells):
-                row_cells[i].text = c
+            for i in range(len(headers)):
+                row_cells[i].text = cells[i]
 
-# --- 4. АВТОРИЗАЦИЯ ---
-user_pass = st.sidebar.text_input("Введите пароль доступа", type="password")
+def create_report_docx(report_content, title_data):
+    """Создает документ с титульным листом и чистым форматированием"""
+    doc = Document()
+    
+    # ТИТУЛЬНЫЙ ЛИСТ
+    p_auth = doc.add_paragraph()
+    p_auth.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run_auth = p_auth.add_run(f"УТВЕРЖДАЮ\nДиректор ООО «{title_data.get('Исполнитель', 'ЭОМ')}»\n\n________________ / {title_data.get('Директор', 'Д.В. Скиба')}\n«___» _________ 2025 г.")
+    run_auth.font.size = Pt(11)
+
+    for _ in range(7): doc.add_paragraph()
+
+    p_title = doc.add_paragraph()
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_main = p_title.add_run("ИНФОРМАЦИОННЫЙ ОТЧЕТ\n")
+    run_main.bold = True
+    run_main.font.size = Pt(20)
+    
+    run_sub = p_title.add_run(f"по исполнению Государственного контракта\n№ {title_data.get('Номер контракта', '_________')} от {title_data.get('Дата контракта', '_________')}\n\n")
+    run_sub.font.size = Pt(14)
+    p_title.add_run(f"{title_data.get('Название проекта', '')}").italic = True
+
+    for _ in range(10): doc.add_paragraph()
+
+    p_city = doc.add_paragraph()
+    p_city.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_city.add_run("Москва, 2025 г.")
+    
+    doc.add_page_break()
+
+    # ОСНОВНОЙ ТЕКСТ (Очистка от звездочек)
+    blocks = report_content.split('\n\n')
+    for block in blocks:
+        if '|' in block and '-|-' in block:
+            add_table_from_markdown(doc, block)
+        else:
+            p = doc.add_paragraph()
+            if block.strip().startswith('#'):
+                p.add_run(block.replace('#', '').strip()).bold = True
+                continue
+            
+            # Обработка жирного текста **текст**
+            parts = block.split('**')
+            for i, part in enumerate(parts):
+                run = p.add_run(part.replace('*', '')) # Убираем оставшиеся одиночные звезды
+                if i % 2 != 0:
+                    run.bold = True
+    return doc
+
+# --- 4. ОСНОВНОЙ ИНТЕРФЕЙС ---
+user_pass = st.sidebar.text_input("Пароль", type="password")
 if user_pass != APP_PASSWORD:
-    st.info("Пожалуйста, введите пароль в боковой панели.")
+    st.info("Введите пароль для доступа к системе.")
     st.stop()
 
-# --- 5. ИНТЕРФЕЙС ---
-st.title("🤖 Генератор профессиональных отчетов (v2.0)")
+# Загрузка базы эталонов
+sheet = gc.open_by_key(SHEET_ID).sheet1
+df_etalons = pd.DataFrame(sheet.get_all_records())
 
-# Подгружаем базу из Google Sheets
-try:
-    sheet = gc.open_by_key(SHEET_ID).sheet1
-    data_etalons = pd.DataFrame(sheet.get_all_records())
-except:
-    st.warning("Не удалось подключиться к Google Таблице. Используются настройки по умолчанию.")
-    data_etalons = pd.DataFrame([{"Тип проекта": "Стандартный", "ЭТАЛОННАЯ СТРУКТУРА": "Стандартная"}])
+st.title("⚖️ Генератор юридических отчетов")
+selected_name = st.selectbox("Выберите тип проекта (эталон)", df_etalons["Тип проекта"].tolist())
+selected_etalon = df_etalons[df_etalons["Тип проекта"] == selected_name].iloc[0]
 
-uploaded_file = st.file_uploader("Загрузите Контракт (DOCX)", type=["docx"])
+uploaded_file = st.file_uploader("Загрузите файл Контракта", type="docx")
 
 if uploaded_file:
-    # ЧИТАЕМ ТЕКСТ КОНТРАКТА (Этого не хватало!)
-    doc_input = Document(uploaded_file)
-    contract_text = "\n".join([p.text for p in doc_input.paragraphs])
+    contract_text = "\n".join([p.text for p in Document(uploaded_file).paragraphs])
     
-    st.success(f"Контракт загружен ({len(contract_text)} симв.)")
-
-    with st.form("interview"):
-        st.subheader("📝 Данные для наполнения отчета")
+    with st.form("data_form"):
         col1, col2 = st.columns(2)
         with col1:
-            q1 = st.text_input("Итоговое количество участников (цифрой)", placeholder="Напр: 80")
+            q1 = st.text_input("Кол-во участников", placeholder="80")
         with col2:
-            q2 = st.text_input("Реквизиты письма согласования", placeholder="Напр: №123 от 01.12.25")
+            q2 = st.text_input("Письмо согласования", placeholder="№1 от 01.12.25")
         
-        additional_facts = st.text_area(
-            "Дополнительные факты реализации (для полноты)", 
-            help="Вставьте сюда даты заездов, адреса сбора, меню. ИИ распределит это по разделам.",
-            placeholder="Напр: 2 группы по 40 чел. Заезды 8-9 и 10-11 декабря. Сбор в Реутове. Питание по меню..."
-        )
+        facts = st.text_area("Доп. детали (даты, меню, адреса)", placeholder="Заезды 8-11 дек, меню: каша...")
         
-        submitted = st.form_submit_button("🔥 Сформировать профессиональный отчет")
+        if st.form_submit_button("Сгенерировать"):
+            with st.spinner("DeepSeek формирует юридический текст..."):
+                # Тот самый универсальный промпт
+                sys_msg = "Ты — ведущий юрист. Создай отчет, зеркально отражая ТЗ Контракта в прошедшем времени. Используй таблицы для характеристик."
+                user_msg = f"КОНТРАКТ: {contract_text[:7000]}\nДАННЫЕ: {q1}, {q2}, {facts}"
+                
+                res = client_ai.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role":"system","content":sys_msg}, {"role":"user","content":user_msg}]
+                )
+                
+                # Собираем данные для титульника из таблицы
+                title_info = {
+                    "Исполнитель": selected_etalon.get("Исполнитель", "ЕОМ"),
+                    "Директор": selected_etalon.get("Директор", "Скиба Д.В."),
+                    "Номер контракта": selected_etalon.get("Номер", "0148200002625000032"),
+                    "Дата контракта": selected_etalon.get("Дата", "01.12.2025"),
+                    "Название проекта": selected_name
+                }
+                
+                final_doc = create_report_docx(res.choices[0].message.content, title_info)
+                
+                buf = io.BytesIO()
+                final_doc.save(buf)
+                st.session_state['report_buffer'] = buf.getvalue()
+                st.success("Отчет готов!")
 
-        if submitted:
-            with st.spinner("Старший юрист DeepSeek анализирует контракт и факты..."):
-                system_instruction = """Ты — ведущий юрист-аналитик. Твоя задача: на основе Контракта составить подробный ИНФОРМАЦИОННЫЙ ОТЧЕТ.
-                ПРАВИЛА:
-                1. ПРИНЦИП ЗЕРКАЛА: Опиши выполнение КАЖДОГО требования из ТЗ. Если в ТЗ указаны параметры оборудования или состав питания — перенеси их в отчет как выполненные.
-                2. ТРАНСФОРМАЦИЯ: Контракт "должен" -> Отчет "Исполнителем обеспечено/выполнено".
-                3. ТАБЛИЦЫ: ОБЯЗАТЕЛЬНО оформляй списки характеристик, меню или графики в виде Markdown-таблиц.
-                4. СТРУКТУРА: Информационная справка -> Предмет -> Сроки -> Объем -> Содержательная часть (Питание, Транспорт и т.д.) -> Качество (ГОСТы)."""
-
-                prompt_text = f"""
-                КОНТРАКТ (ТЗ): {contract_text[:7000]} 
-                ФАКТЫ ИЗ ИНТЕРВЬЮ: Участников: {q1}, Письмо: {q2}, Детали: {additional_facts}
-                ЗАДАНИЕ: Напиши полный текст отчета. Для разделов с характеристиками используй таблицы."""
-
-                try:
-                    res = client_ai.chat.completions.create(
-                        model="deepseek-chat",
-                        messages=[
-                            {"role": "system", "content": system_instruction},
-                            {"role": "user", "content": prompt_text}
-                        ]
-                    )
-                    
-                    report_content = res.choices[0].message.content
-                    
-                    # СОЗДАНИЕ ДОКУМЕНТА WORD
-                    out_doc = Document()
-                    blocks = report_content.split('\n\n')
-                    
-                    for block in blocks:
-                        if '|' in block and '-|-' in block:
-                            add_table_from_markdown(out_doc, block)
-                        else:
-                            if block.startswith('#'):
-                                out_doc.add_heading(block.replace('#', '').strip(), level=2)
-                            else:
-                                out_doc.add_paragraph(block)
-                    
-                    # Сохранение в память
-                    buffer = io.BytesIO()
-                    out_doc.save(buffer)
-                    st.session_state['report_buffer'] = buffer.getvalue()
-                    st.success("Отчет готов!")
-                except Exception as e:
-                    st.error(f"Ошибка ИИ: {e}")
-
-# КНОПКА СКАЧИВАНИЯ
 if 'report_buffer' in st.session_state:
-    st.download_button(
-        label="📥 Скачать готовый Отчет (.docx)", 
-        data=st.session_state['report_buffer'], 
-        file_name="Final_Report.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
