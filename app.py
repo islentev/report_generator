@@ -178,12 +178,24 @@ if uploaded_file:
             except Exception as e:
                 st.error(f"Ошибка: {e}")
 
-# --- 5. ВЫВОД КНОПКИ СКАЧИВАНИЯ ---
-if st.session_state['report_buffer']:
+# --- 5. ВЫВОД КНОПКИ СКАЧИВАНИЯ (ИСПРАВЛЕННЫЙ) ---
+if st.session_state.get('report_buffer') is not None:
     st.divider()
+    st.subheader("📥 Результат")
+    
+    # ПРОВЕРКА: Берем номер контракта из meta, если он есть, иначе пишем "final"
+    # Это предотвращает ошибку NameError / KeyError
+    if st.session_state.get('title_info'):
+        contract_suffix = st.session_state['title_info'].get('contract_no', 'final')
+    else:
+        contract_suffix = 'final'
+        
+    # Очищаем номер контракта от символов, которые запрещены в именах файлов
+    clean_name = str(contract_suffix).replace("/", "_").replace("\\", "_")
+    
     st.download_button(
-        label="📥 Скачать готовый Отчет (.docx)",
+        label="Скачать готовый Отчет (.docx)",
         data=st.session_state['report_buffer'],
-        file_name=f"Report_{meta['contract_no']}.docx",
+        file_name=f"Report_{clean_name}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
