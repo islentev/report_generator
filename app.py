@@ -19,7 +19,8 @@ try:
     gc = gspread.authorize(creds)
     
     DEEPSEEK_KEY = st.secrets["DEEPSEEK_API_KEY"].strip().strip('"')
-    client_ai = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
+    # Добавили /v1 для стабильности
+    client_ai = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com/v1")
     
     SHEET_ID = st.secrets["SHEET_ID"]
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
@@ -30,24 +31,28 @@ except Exception as e:
 # --- 3. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
 def add_table_from_markdown(doc, markdown_text):
-    """Превращает Markdown-таблицу в таблицу Word"""
     lines = [line.strip() for line in markdown_text.split('\n') if '|' in line]
     if len(lines) < 3: return
+    
     headers = [cell.strip() for cell in lines[0].split('|') if cell.strip()]
     table = doc.add_table(rows=1, cols=len(headers))
     table.style = 'Table Grid'
     hdr_cells = table.rows[0].cells
     for i, h in enumerate(headers):
         hdr_cells[i].text = h
+        
     for line in lines[2:]:
-        cells = [cell.strip() for line_part in line.split('|') if (cell := line_part.strip())]
+        # Более надежное разделение ячеек
+        cells = [cell.strip() for cell in line.split('|') if cell.strip() or line.split('|')[0] == '']
+        # Фильтруем пустые элементы по краям
+        if line.startswith('|'): cells = [cell.strip() for cell in line.split('|')][1:-1]
+        
         if len(cells) >= len(headers):
             row_cells = table.add_row().cells
             for i in range(len(headers)):
                 row_cells[i].text = cells[i]
 
 def create_report_docx(report_content, title_data):
-    """Создает документ с титульным листом и чистым форматированием"""
     doc = Document()
     
     # ТИТУЛЬНЫЙ ЛИСТ
@@ -76,7 +81,7 @@ def create_report_docx(report_content, title_data):
     
     doc.add_page_break()
 
-    # ОСНОВНОЙ ТЕКСТ (Очистка от звездочек)
+    # ОСНОВНОЙ ТЕКСТ
     blocks = report_content.split('\n\n')
     for block in blocks:
         if '|' in block and '-|-' in block:
@@ -87,10 +92,9 @@ def create_report_docx(report_content, title_data):
                 p.add_run(block.replace('#', '').strip()).bold = True
                 continue
             
-            # Обработка жирного текста **текст**
             parts = block.split('**')
             for i, part in enumerate(parts):
-                run = p.add_run(part.replace('*', '')) # Убираем оставшиеся одиночные звезды
+                run = p.add_run(part.replace('*', ''))
                 if i % 2 != 0:
                     run.bold = True
     return doc
@@ -102,12 +106,14 @@ if user_pass != APP_PASSWORD:
     st.stop()
 
 # Загрузка базы эталонов
-sheet = gc.open_by_key(SHEET_ID).sheet1
-df_etalons = pd.DataFrame(sheet.get_all_records())
-
-st.title("⚖️ Генератор юридических отчетов")
-selected_name = st.selectbox("Выберите тип проекта (эталон)", df_etalons["Тип проекта"].tolist())
-selected_etalon = df_etalons[df_etalons["Тип проекта"] == selected_name].iloc[0]
+try:
+    sheet = gc.open_by_key(SHEET_ID).sheet1
+    df_etalons = pd.DataFrame(sheet.get_all_records())
+    selected_name = st.selectbox("Выберите тип проекта (эталон)", df_etalons["Тип проекта"].tolist())
+    selected_etalon = df_etalons[df_etalons["Тип проекта"] == selected_name].iloc[0]
+except Exception as e:
+    st.error(f"Ошибка загрузки таблицы: {e}")
+    st.stop()
 
 uploaded_file = st.file_uploader("Загрузите файл Контракта", type="docx")
 
@@ -123,23 +129,24 @@ if uploaded_file:
         
         facts = st.text_area("Доп. детали (даты, меню, адреса)", placeholder="Заезды 8-11 дек, меню: каша...")
         
-        if st.form_submit_button("Сгенерировать"):
-            with st.spinner("DeepSeek формирует юридический текст..."):
-                # Тот самый универсальный промпт
+        submitted = st.form_submit_button("Сгенерировать")
+        
+    if submitted:
+        with st.spinner("DeepSeek формирует юридический текст..."):
+            try:
                 sys_msg = "Ты — ведущий юрист. Создай отчет, зеркально отражая ТЗ Контракта в прошедшем времени. Используй таблицы для характеристик."
-                user_msg = f"КОНТРАКТ: {contract_text[:7000]}\nДАННЫЕ: {q1}, {q2}, {facts}"
+                user_msg = f"КОНТРАКТ: {contract_text[:7000]}\nДАННЫЕ: Участников: {q1}, Письмо: {q2}, Детали: {facts}"
                 
                 res = client_ai.chat.completions.create(
                     model="deepseek-chat",
                     messages=[{"role":"system","content":sys_msg}, {"role":"user","content":user_msg}]
                 )
                 
-                # Собираем данные для титульника из таблицы
                 title_info = {
-                    "Исполнитель": selected_etalon.get("Исполнитель", "ЕОМ"),
-                    "Директор": selected_etalon.get("Директор", "Скиба Д.В."),
-                    "Номер контракта": selected_etalon.get("Номер", "0148200002625000032"),
-                    "Дата контракта": selected_etalon.get("Дата", "01.12.2025"),
+                    "Исполнитель": str(selected_etalon.get("Исполнитель", "ЕОМ")),
+                    "Директор": str(selected_etalon.get("Директор", "Скиба Д.В.")),
+                    "Номер контракта": str(selected_etalon.get("Номер", "0148200002625000032")),
+                    "Дата контракта": str(selected_etalon.get("Дата", "01.12.2025")),
                     "Название проекта": selected_name
                 }
                 
@@ -153,11 +160,16 @@ if uploaded_file:
             except Exception as e:
                 st.error(f"Ошибка ИИ: {e}")
 
-# ВАЖНО: Эта кнопка должна стоять БЕЗ отступа относительно "if uploaded_file"
-if 'report_buffer' in st.session_state:
-    st.download_button(
-        label="📥 Скачать Отчет .docx", 
-        data=st.session_state['report_buffer'], 
-        file_name="Report_Legal.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
+    # Кнопка скачивания вне формы
+    if 'report_buffer' in st.session_state:
+        st.download_button(
+            label="📥 Скачать Отчет .docx", 
+            data=st.session_state['report_buffer'], 
+            file_name="Report_Legal.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+    
+    # ТИТУЛЬНЫЙ ЛИСТ
+    p_auth = doc.add_paragraph()
+    p_auth.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run_auth = p_auth.add_run(f"УТВЕРЖДАЮ\n
