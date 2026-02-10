@@ -145,7 +145,11 @@ if uploaded_file:
                 )
                 
                 # 5. Сохраняем результат
-                doc_final = create_report_docx(report_res.choices[0].message.content, meta, "Перечень документов согласно ТЗ.")
+                doc_final = create_report_docx(
+                    report_res.choices[0].message.content, 
+                    meta, 
+                    req_res.choices[0].message.content  # <--- Передаем реальный список документов от ИИ
+                )
                 buf = io.BytesIO()
                 doc_final.save(buf)
                 st.session_state['report_buffer'] = buf.getvalue()
@@ -156,6 +160,7 @@ if st.session_state['report_buffer']:
     file_name = f"отчет № {c_no}.docx" if c_no else "отчет.docx"
     
     st.download_button("📥 Скачать готовый отчет", st.session_state['report_buffer'], file_name)
+
 
 
 
