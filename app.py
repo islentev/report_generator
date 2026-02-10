@@ -32,15 +32,21 @@ def create_report_docx(report_content, title_data, requirements_list):
     # 1. ТИТУЛЬНЫЙ ЛИСТ
     p_auth = doc.add_paragraph()
     p_auth.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p_auth.add_run(f"УТВЕРЖДАЮ\n{title_data.get('company', '')}\n\n________________ / {title_data.get('director', '')}\n«___» _________ 2025 г.").font.size = Pt(11)
+    # Используем .get() с запасным значением, чтобы не было пустоты
+    company = title_data.get('company', 'Общество с ограниченной ответственностью')
+    director = title_data.get('director', '________________')
+    contract_no = title_data.get('contract_no', '')
+    project_name = title_data.get('project_name', '')
+
+    p_auth.add_run(f"УТВЕРЖДАЮ\n{company}\n\n________________ / {director}\n«___» _________ 2025 г.").font.size = Pt(11)
 
     for _ in range(7): doc.add_paragraph()
     p_title = doc.add_paragraph()
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_title.add_run("ИНФОРМАЦИОННЫЙ ОТЧЕТ\n").bold = True
     p_title.runs[-1].font.size = Pt(20)
-    p_title.add_run(f"по Контракту № {title_data.get('contract_no', '')}\n").font.size = Pt(14)
-    p_title.add_run(title_data.get('project_name', '')).italic = True
+    p_title.add_run(f"по Контракту № {contract_no}\n").font.size = Pt(14)
+    p_title.add_run(project_name).italic = True
 
     doc.add_page_break()
 
@@ -52,9 +58,9 @@ def create_report_docx(report_content, title_data, requirements_list):
             run = p.add_run(part.replace('*', ''))
             if part in block.split('**')[1::2]: run.bold = True
     
-    # --- ПОДПИСЬ ДИРЕКТОРА СРАЗУ ПОСЛЕ ОТЧЕТА ---
+    # ПОДПИСЬ ДИРЕКТОРА СРАЗУ ПОСЛЕ ОТЧЕТА
     p_sign = doc.add_paragraph()
-    p_sign.add_run(f"\n\nДиректор {title_data.get('company', '')}  _________________ / {title_data.get('director', '')}")
+    p_sign.add_run(f"\n\nДиректор {company}  _________________ / {director}")
 
     doc.add_page_break()
 
@@ -66,7 +72,7 @@ def create_report_docx(report_content, title_data, requirements_list):
 
     return doc
 
-# --- 4. ОСНОВНОЙ БЛОК ЛОГИКИ (ТЕПЕРЬ БЕЗ ЛИШНИХ ОТСТУПОВ) ---
+# --- 4. ОСНОВНОЙ БЛОК ЛОГИКИ ---
 user_pass = st.sidebar.text_input("Пароль", type="password")
 if user_pass != APP_PASSWORD: st.stop()
 
@@ -81,12 +87,12 @@ if uploaded_file:
     doc_obj = Document(uploaded_file)
     full_text = "\n".join([p.text for p in doc_obj.paragraphs])
     
-    # 1. Распознавание реквизитов (первые 3к символов)
+    # 1. Распознавание реквизитов (строго из начала - 3000 символов)
     if not st.session_state['title_info']:
         with st.spinner("Извлечение реквизитов из начала документа..."):
             res = client_ai.chat.completions.create(
                 model="deepseek-chat",
-                messages=[{"role": "user", "content": f"Найди Исполнителя, Директора, Номер и Предмет контракта в тексте: {full_text[:3000]}. Выдай JSON."}],
+                messages=[{"role": "user", "content": f"Найди Исполнителя (company), Директора (director), Номер контракта (contract_no) и Предмет (project_name) в тексте: {full_text[:3000]}. Выдай JSON."}],
                 response_format={ 'type': 'json_object' }
             )
             st.session_state['title_info'] = json.loads(res.choices[0].message.content)
@@ -98,13 +104,11 @@ if uploaded_file:
         facts = st.text_area("Фактические детали выполнения (даты, количество и т.д.)")
         if st.form_submit_button("Сгенерировать отчет"):
             with st.spinner("Точечный анализ: Реквизиты (3к) + ТЗ..."):
-                head_text = full_text[:3000] 
                 
-                # 2. Ищем ТЗ с конца документа
+                # Поиск ТЗ с конца документа
                 text_upper = full_text.upper()
                 tz_markers = ["ПРИЛОЖЕНИЕ № 1", "ТЕХНИЧЕСКОЕ ЗАДАНИЕ", "ОПИСАНИЕ ОБЪЕКТА ЗАКУПКИ"]
                 tz_index = -1
-                
                 for marker in tz_markers:
                     found = text_upper.rfind(marker)
                     if found != -1 and found > tz_index:
@@ -112,24 +116,23 @@ if uploaded_file:
                 
                 clean_tz = full_text[tz_index:] if tz_index != -1 else full_text[-40000:]
     
-                # 3. Написание отчета по ТЗ
+                # 2. ВОЗВРАЩЕННЫЙ РАБОЧИЙ ПРОМПТ ДЛЯ ОТЧЕТА
                 report_res = client_ai.chat.completions.create(
                     model="deepseek-chat",
                     messages=[
-                        {"role": "system", "content": "Ты технический эксперт. Твоя задача — описать выполнение УСЛУГ из ТЗ. Пиши только про мероприятия, застройку, персонал и логистику. Галлюцинации запрещены."},
+                        {"role": "system", "content": "Ты технический эксперт. Твоя задача — описать выполнение УСЛУГ из ТЗ. Забудь про разделы 'права и обязанности', пиши только про мероприятия, застройку, персонал и логистику. Галлюцинации запрещены."},
                         {"role": "user", "content": f"НАПИШИ ОТЧЕТ ПО ЭТОМУ ТЗ В ПРОШЕДШЕМ ВРЕМЕНИ: {clean_tz}. ФАКТЫ: {facts}"}
                     ]
                 )
 
-                # 4. Поиск требований к документации
+                # 3. ПОИСК ТРЕБОВАНИЙ К ДОКУМЕНТАЦИИ
                 req_prompt = f"""Внимательно изучи текст ТЗ и выпиши ВСЕ документы, которые Исполнитель обязан предоставить по итогам работ (Акты, фотоотчеты, видео и т.д.). ТЕКСТ ТЗ: {clean_tz}"""
-                
                 req_res = client_ai.chat.completions.create(
                     model="deepseek-chat",
                     messages=[{"role": "user", "content": req_prompt}]
                 )
                 
-                # 5. Создание документа
+                # 4. СОЗДАНИЕ ДОКУМЕНТА
                 doc_final = create_report_docx(
                     report_res.choices[0].message.content, 
                     meta, 
@@ -140,7 +143,8 @@ if uploaded_file:
                 doc_final.save(buf)
                 st.session_state['report_buffer'] = buf.getvalue()
 
-# Кнопка скачивания с номером контракта
+# Кнопка скачивания
 if st.session_state['report_buffer']:
+    # Безопасное получение номера контракта для имени файла
     c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
     st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
