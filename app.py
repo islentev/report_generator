@@ -129,7 +129,7 @@ if uploaded_file:
     full_text = "\n".join([p.text for p in doc_obj.paragraphs])
     
     # 1. Распознавание реквизитов (строго из начала - 3000 символов)
-    if not st.session_stateю.get['title_info']:
+    if not st.session_state.get['title_info']:
         with st.spinner("Извлечение реквизитов из начала документа..."):
             res = client_ai.chat.completions.create(
                 model="deepseek-chat",
@@ -200,5 +200,6 @@ if st.session_state['report_buffer']:
     # Безопасное получение номера контракта для имени файла
     c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
     st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
+
 
 
