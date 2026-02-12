@@ -10,6 +10,15 @@ import io
 import json
 import re
 
+def format_fio_universal(raw_fio):
+    if not raw_fio or len(raw_fio) < 5: return "________________"
+    # Убираем возможный "мусор" (должности), который ИИ может случайно прихватить в ФИО
+    clean = re.sub(r'(директор|министр|заместитель|начальник|председатель|генеральный)', '', raw_fio, flags=re.IGNORECASE).strip()
+    parts = clean.split()
+    if len(parts) >= 3: return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
+    if len(parts) == 2: return f"{parts[0]} {parts[1][0]}."
+    return clean
+
 # --- 1. НАСТРОЙКА ---
 st.set_page_config(page_title="Юридический Генератор", layout="wide")
 
@@ -48,6 +57,15 @@ def create_report_docx(report_content, title_data, requirements_list):
     customer_signer = title_data.get('customer_signer', '________________')
     company = title_data.get('company', '')
     director = format_name(title_data.get('director', ''))
+
+    # Универсальная сборка: Должность с большой буквы + Фамилия И.О.
+    cust_post = title_data.get('customer_post', 'Заказчик').capitalize()
+    cust_fio = format_fio_universal(title_data.get('customer_fio', ''))
+    formatted_signer_customer = f"{cust_post} {cust_fio}"
+
+    exec_post = title_data.get('executor_post', 'Директор').capitalize()
+    exec_fio = format_fio_universal(title_data.get('director', ''))
+    formatted_signer_executor = f"{exec_post}" # Для правой части таблицы
 
     # Стиль по умолчанию: Times New Roman 12
     style = doc.styles['Normal']
@@ -210,13 +228,31 @@ if uploaded_file:
                 
                 # --- ЗАПРОСЫ К ИИ ---
                 
-                # 1. Данные титульника
+                # 1. Данные титульника (Строго ваши лимиты: 1000 начало + 1000 конец)
+                context_title = full_text[:1000] + "\n[...]\n" + full_text[-1000:]
+                
                 res_title = client_ai.chat.completions.create(
                     model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"Извлеки JSON: contract_no (номер из ПЕРВОЙ строки), contract_date, ikz, project_name (предмет), customer, customer_signer (должность и ФИО из конца), company, director. Текст: {context_title}"}],
+                    messages=[{"role": "user", "content": f"""
+                        Извлеки СЫРЫЕ данные (как в тексте) в формате JSON. 
+                        Не сокращай ФИО сам! Просто найди полное имя.
+                        
+                        Поля:
+                        - contract_no: Номер из САМОЙ ПЕРВОЙ строки.
+                        - contract_date: Дата.
+                        - ikz: 36 цифр кода.
+                        - project_name: Предмет контракта (С БОЛЬШОЙ БУКВЫ).
+                        - customer: Название организации Заказчика.
+                        - customer_post: Должность подписанта Заказчика.
+                        - customer_fio: ФИО подписанта Заказчика.
+                        - company: Название Исполнителя.
+                        - executor_post: Должность руководителя Исполнителя.
+                        - director: ПОЛНОЕ ФИО руководителя Исполнителя.
+
+                        Текст: {context_title}
+                    """}],
                     response_format={ 'type': 'json_object' }
                 )
-                title_info = json.loads(res_title.choices[0].message.content)
                 
                 # 2. Текст отчета (на базе полного ТЗ)
                 res_report = client_ai.chat.completions.create(
@@ -254,3 +290,4 @@ if st.session_state.get('report_buffer'):
         file_name=f"отчет и № {c_no}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
+
