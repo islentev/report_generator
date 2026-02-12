@@ -177,7 +177,7 @@ if uploaded_file:
         facts = st.text_area("Фактические детали выполнения (даты, количество и т.д.)")
         if st.form_submit_button("Сгенерировать отчет"):
             with st.spinner("Генерация отчета по пунктам ТЗ..."):
-                # Находим начало ТЗ
+                # 1. Находим начало ТЗ
                 text_upper = full_text.upper()
                 tz_markers = ["ПРИЛОЖЕНИЕ № 1", "ТЕХНИЧЕСКОЕ ЗАДАНИЕ", "ОПИСАНИЕ ОБЪЕКТА ЗАКУПКИ"]
                 tz_index = -1
@@ -187,24 +187,33 @@ if uploaded_file:
                         tz_index = found
                         break
                 
-                # Если маркер не найден, берем всё, но для безопасности ищем с середины
                 if tz_index == -1:
                     tz_index = 0 
                 
+                # 2. Находим КОНЕЦ ТЗ (чтобы не захватить лишние приложения №2, №3 и т.д.)
+                end_markers = ["ПРИЛОЖЕНИЕ № 2", "ПРИЛОЖЕНИЕ № 3", "РАСЧЕТ СТОИМОСТИ", "ПОДПИСИ СТОРОН"]
+                tz_end_index = len(full_text)
+                for marker in end_markers:
+                    # Ищем маркер конца только ПОСЛЕ начала ТЗ
+                    found_end = text_upper.find(marker, tz_index + 100)
+                    if found_end != -1:
+                        tz_end_index = found_end
+                        break
+                
                 # --- ФОРМИРУЕМ БЛОКИ ---
                 
-                # Блок 1: Для титульника (строго 1000 знаков с начала и 1000 с конца)
+                # Блок 1: Для титульника (1000 знаков с начала и 1000 с конца)
                 context_title = full_text[:1000] + "\n[...]\n" + full_text[-1000:]
                 
-                # Блок 2 и 3: ТЗ ПОЛНОСТЬЮ (от маркера и до самого конца документа)
-                context_tz_full = full_text[tz_index:] 
+                # Блок 2 и 3: Чистое ТЗ (от начала ТЗ до следующего приложения или конца)
+                context_tz_full = full_text[tz_index : tz_end_index]
                 
                 # --- ЗАПРОСЫ К ИИ ---
                 
                 # 1. Данные титульника
                 res_title = client_ai.chat.completions.create(
                     model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"Извлеки данные для титульника. Номер контракта в САМОЙ ПЕРВОЙ СТРОКЕ. Подписант Заказчика (должность и ФИО) в самом конце. Текст: {context_title}"}],
+                    messages=[{"role": "user", "content": f"Извлеки JSON: contract_no (номер из ПЕРВОЙ строки), contract_date, ikz, project_name (предмет), customer, customer_signer (должность и ФИО из конца), company, director. Текст: {context_title}"}],
                     response_format={ 'type': 'json_object' }
                 )
                 title_info = json.loads(res_title.choices[0].message.content)
@@ -216,30 +225,30 @@ if uploaded_file:
                 )
                 report_text = res_report.choices[0].message.content
                 
-                # 3. Требования (на базе полного ТЗ)
+                # 3. Требования (на базе полного ТЗ + хвост контракта для поиска условий приемки)
+                context_docs = context_tz_full + "\n" + full_text[-3000:]
                 res_req = client_ai.chat.completions.create(
                     model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"Выпиши список отчетных документов (акты, фото, видео) из этого ТЗ: {context_tz_full}"}]
+                    messages=[{"role": "user", "content": f"Выпиши список отчетных документов (акты, фото, видео) из этого текста: {context_docs}"}]
                 )
                 requirements_text = res_req.choices[0].message.content
-                )
+                
+                # --- СОХРАНЕНИЕ ---
+                # Вызываем вашу функцию создания документа (убедитесь, что она определена выше)
+                doc_final = create_report_docx(report_text, title_info, requirements_text)
                 
                 buf = io.BytesIO()
                 doc_final.save(buf)
                 st.session_state['report_buffer'] = buf.getvalue()
-
-# Кнопка скачивания
-if st.session_state.get('report_buffer'):
-    c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
-    st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
-
-
-
-
-
-
-
-
-
-
-
+                
+                # Кнопка скачивания
+                if st.session_state.get('report_buffer'):
+                    # Очищаем номер контракта от запрещенных символов для имени файла
+                    raw_no = title_info.get('contract_no', 'бн')
+                    c_no = re.sub(r'[\\/*?:"<>|]', "_", str(raw_no))
+                    st.download_button(
+                        label=f"📥 Скачать отчет № {c_no}",
+                        data=st.session_state['report_buffer'],
+                        file_name=f"отчет и № {c_no}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
