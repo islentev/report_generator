@@ -29,7 +29,6 @@ except Exception as e:
 def create_report_docx(report_content, title_data, requirements_list):
     doc = Document()
     
-    # ФУНКЦИЯ ДЛЯ ФАМИЛИИ С ИНИЦИАЛАМИ (Гринин Е.В.)
     def format_name(full_name):
         if not full_name: return ""
         parts = full_name.split()
@@ -37,21 +36,20 @@ def create_report_docx(report_content, title_data, requirements_list):
             return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
         return full_name
 
-    # Извлечение данных
+    # Подготовка данных
     contract_no = title_data.get('contract_no', '________________')
     contract_date = title_data.get('contract_date', '___')
-    ikz = title_data.get('ikz', '')
+    ikz = title_data.get('ikz', '________________')
     
-    # Чтобы предмет не начинался с маленькой буквы, используем capitalize() или оставляем как есть, если там уже заглавная
-    raw_project_name = title_data.get('project_name', '')
-    project_name = raw_project_name[0].upper() + raw_project_name[1:] if raw_project_name else ""
+    raw_name = title_data.get('project_name', '')
+    project_name = raw_name[0].upper() + raw_name[1:] if raw_name else ""
     
     customer = title_data.get('customer', '')
-    customer_signer = title_data.get('customer_signer', '________________') # Здесь должна быть должность + ФИО
+    customer_signer = title_data.get('customer_signer', '________________')
     company = title_data.get('company', '')
     director = format_name(title_data.get('director', ''))
 
-    # Настройка стиля (Times New Roman 12)
+    # Стиль по умолчанию: Times New Roman 12
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
@@ -60,48 +58,34 @@ def create_report_docx(report_content, title_data, requirements_list):
     p_top = doc.add_paragraph()
     p_top.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # ЖИРНЫМ: Заголовок и Контракт
+    # ЖИРНЫМ: Заголовок и Контракт (первая строка)
     run1 = p_top.add_run("Информационно-аналитический отчет об исполнении условий\n")
     run1.bold = True
     run2 = p_top.add_run(f"Контракта № {contract_no} от «{contract_date}» 2025 г.\n")
     run2.bold = True
-    
-    # ОБЫЧНЫМ: ИКЗ
     p_top.add_run(f"Идентификационный код закупки: {ikz}.")
 
     for _ in range(3): doc.add_paragraph()
 
-    # ЖИРНЫМ: ТОМ I
     p_tom = doc.add_paragraph()
     p_tom.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_tom.add_run("ТОМ I").bold = True
 
-    # Наименование предмета (Заголовок ЖИРНЫМ, текст КУРСИВОМ)
-    p_subj_h = doc.add_paragraph()
-    p_subj_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_subj_h.add_run("Наименование предмета КОНТРАКТА :").bold = True
+    # Блоки с ЖИРНЫМИ заголовками
+    labels_values = [
+        ("Наименование предмета КОНТРАКТА :", project_name),
+        ("Заказчик:", customer),
+        ("Исполнитель:", company)
+    ]
     
-    p_subj = doc.add_paragraph()
-    p_subj.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_subj.add_run(project_name).italic = True
-
-    # Заказчик (Заголовок ЖИРНЫМ, текст КУРСИВОМ)
-    p_cust_h = doc.add_paragraph()
-    p_cust_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_cust_h.add_run("Заказчик:").bold = True
-    
-    p_cust = doc.add_paragraph()
-    p_cust.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_cust.add_run(customer).italic = True
-
-    # Исполнитель (Заголовок ЖИРНЫМ, текст КУРСИВОМ)
-    p_isp_h = doc.add_paragraph()
-    p_isp_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_isp_h.add_run("Исполнитель:").bold = True
-    
-    p_isp = doc.add_paragraph()
-    p_isp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_isp.add_run(company).italic = True
+    for label, value in labels_values:
+        p_h = doc.add_paragraph()
+        p_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_h.add_run(label).bold = True # ЖИРНЫМ заголовок
+        
+        p_v = doc.add_paragraph()
+        p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_v.add_run(value).italic = True # КУРСИВОМ данные
 
     for _ in range(4): doc.add_paragraph()
 
@@ -109,26 +93,24 @@ def create_report_docx(report_content, title_data, requirements_list):
     table = doc.add_table(rows=2, cols=2)
     table.width = doc.sections[0].page_width
     
-    # ЗАКАЗЧИК (слева). Заголовок ЖИРНЫМ.
-    cell_l = table.rows[0].cells[0]
-    p_l = cell_l.paragraphs[0]
+    # Заказчик (Жирный заголовок)
+    p_l = table.rows[0].cells[0].paragraphs[0]
     p_l.add_run("Отчет принят Заказчиком").bold = True
     p_l.add_run(f"\n\n{customer_signer}\n\n_______________")
     
-    # ИСПОЛНИТЕЛЬ (справа). Заголовок ЖИРНЫМ.
-    cell_r = table.rows[0].cells[1]
-    p_r = cell_r.paragraphs[0]
+    # Исполнитель (Жирный заголовок, выравнивание ВЛЕВО)
+    p_r = table.rows[0].cells[1].paragraphs[0]
     p_r.alignment = WD_ALIGN_PARAGRAPH.LEFT 
     p_r.add_run("Отчет передан Исполнителем").bold = True
     p_r.add_run(f"\n\nДиректор\n\n_______________ / {director}")
     
-    # м.п. под чертой
+    # М.П.
     table.rows[1].cells[0].paragraphs[0].add_run("м.п.")
     table.rows[1].cells[1].paragraphs[0].add_run("м.п.")
 
     doc.add_page_break()
 
-    # --- ТЕКСТ ОТЧЕТА ---
+    # --- ТЕКСТ ОТЧЕТА (БЕЗ ПОДПИСЕЙ В КОНЦЕ) ---
     doc.add_heading('ОТЧЕТ О ВЫПОЛНЕНИИ ТЕХНИЧЕСКОГО ЗАДАНИЯ', level=1)
     for block in report_content.split('\n\n'):
         p = doc.add_paragraph()
@@ -140,6 +122,7 @@ def create_report_docx(report_content, title_data, requirements_list):
 
     doc.add_page_break()
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
+    # Здесь вставляем requirements_list аналогично блоку выше
     doc.add_paragraph(requirements_list)
 
     return doc
@@ -194,37 +177,51 @@ if uploaded_file:
         facts = st.text_area("Фактические детали выполнения (даты, количество и т.д.)")
         if st.form_submit_button("Сгенерировать отчет"):
             with st.spinner("Генерация отчета по пунктам ТЗ..."):
-                # Ищем ТЗ с конца документа
+                # Находим начало ТЗ
                 text_upper = full_text.upper()
                 tz_markers = ["ПРИЛОЖЕНИЕ № 1", "ТЕХНИЧЕСКОЕ ЗАДАНИЕ", "ОПИСАНИЕ ОБЪЕКТА ЗАКУПКИ"]
                 tz_index = -1
                 for marker in tz_markers:
-                    found = text_upper.rfind(marker)
-                    if found != -1 and found > tz_index:
+                    found = text_upper.find(marker)
+                    if found != -1:
                         tz_index = found
+                        break
                 
-                clean_tz = full_text[tz_index:] if tz_index != -1 else full_text[-40000:]
-    
-                # 2. Основной отчет (Ваш проверенный промпт)
-                report_res = client_ai.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[
-                        {"role": "system", "content": "Ты технический эксперт. Твоя задача — описать выполнение УСЛУГ из ТЗ. Забудь про разделы 'права и обязанности', пиши только про мероприятия, застройку, персонал и логистику. Галлюцинации запрещены."},
-                        {"role": "user", "content": f"НАПИШИ ОТЧЕТ ПО ЭТОМУ ТЗ В ПРОШЕДШЕМ ВРЕМЕНИ: {clean_tz}. ФАКТЫ: {facts}"}
-                    ]
-                )
-
-                # 3. Требования к документации
-                req_res = client_ai.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"Выпиши списком все отчетные документы (акты, фото, видео) из ТЗ: {clean_tz}"}]
-                )
+                # Если маркер не найден, берем всё, но для безопасности ищем с середины
+                if tz_index == -1:
+                    tz_index = 0 
                 
-                # 4. Сборка документа (использует новую функцию с титульником)
-                doc_final = create_report_docx(
-                    report_res.choices[0].message.content, 
-                    meta, 
-                    req_res.choices[0].message.content
+                # --- ФОРМИРУЕМ БЛОКИ ---
+                
+                # Блок 1: Для титульника (строго 1000 знаков с начала и 1000 с конца)
+                context_title = full_text[:1000] + "\n[...]\n" + full_text[-1000:]
+                
+                # Блок 2 и 3: ТЗ ПОЛНОСТЬЮ (от маркера и до самого конца документа)
+                context_tz_full = full_text[tz_index:] 
+                
+                # --- ЗАПРОСЫ К ИИ ---
+                
+                # 1. Данные титульника
+                res_title = client_ai.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": f"Извлеки данные для титульника. Номер контракта в САМОЙ ПЕРВОЙ СТРОКЕ. Подписант Заказчика (должность и ФИО) в самом конце. Текст: {context_title}"}],
+                    response_format={ 'type': 'json_object' }
+                )
+                title_info = json.loads(res_title.choices[0].message.content)
+                
+                # 2. Текст отчета (на базе полного ТЗ)
+                res_report = client_ai.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": f"Напиши подробный отчет о выполненных работах, используя ВСЁ это ТЗ: {context_tz_full}"}]
+                )
+                report_text = res_report.choices[0].message.content
+                
+                # 3. Требования (на базе полного ТЗ)
+                res_req = client_ai.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": f"Выпиши список отчетных документов (акты, фото, видео) из этого ТЗ: {context_tz_full}"}]
+                )
+                requirements_text = res_req.choices[0].message.content
                 )
                 
                 buf = io.BytesIO()
@@ -235,6 +232,7 @@ if uploaded_file:
 if st.session_state.get('report_buffer'):
     c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
     st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
+
 
 
 
