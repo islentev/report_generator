@@ -29,24 +29,65 @@ except Exception as e:
 def create_report_docx(report_content, title_data, requirements_list):
     doc = Document()
     
-    # 1. ТИТУЛЬНЫЙ ЛИСТ
-    p_auth = doc.add_paragraph()
-    p_auth.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    # Используем .get() с запасным значением, чтобы не было пустоты
-    company = title_data.get('company', 'Общество с ограниченной ответственностью')
-    director = title_data.get('director', '________________')
-    contract_no = title_data.get('contract_no', '')
-    project_name = title_data.get('project_name', '')
+    # Настройка стиля по умолчанию (Times New Roman 12)
+    style = doc.styles['Normal']
+    style.font.name = 'Times New Roman'
+    style.font.size = Pt(12)
 
-    p_auth.add_run(f"УТВЕРЖДАЮ\n{company}\n\n________________ / {director}\n«___» _________ 2025 г.").font.size = Pt(11)
+    # 1. ТИТУЛЬНЫЙ ЛИСТ (Один в один по примеру)
+    # Шапка: Название и ИКЗ
+    p_top = doc.add_paragraph()
+    p_top.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_top.add_run("Информационно-аналитический отчет об исполнении условий\n").bold = True
+    p_top.add_run(f"Контракта № {title_data.get('contract_no', '')} от «{title_data.get('contract_date', '___')}» 2025 г.\n")
+    
+    ikz = title_data.get('ikz', '')
+    p_top.add_run(f"Идентификационный код закупки: {ikz if ikz else '___________________________'}.")
 
-    for _ in range(7): doc.add_paragraph()
-    p_title = doc.add_paragraph()
-    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_title.add_run("ИНФОРМАЦИОННЫЙ ОТЧЕТ\n").bold = True
-    p_title.runs[-1].font.size = Pt(20)
-    p_title.add_run(f"по Контракту № {contract_no}\n").font.size = Pt(14)
-    p_title.add_run(project_name).italic = True
+    for _ in range(3): doc.add_paragraph()
+
+    # ТОМ I
+    p_tom = doc.add_paragraph()
+    p_tom.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_tom.add_run("ТОМ I").bold = True
+
+    # Предмет КОНТРАКТА
+    p_subj_head = doc.add_paragraph()
+    p_subj_head.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_subj_head.add_run("Наименование предмета КОНТРАКТА:").font.size = Pt(11)
+    
+    p_subj = doc.add_paragraph()
+    p_subj.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_subj.add_run(title_data.get('project_name', '')).bold = True
+
+    # Заказчик
+    doc.add_paragraph("Заказчик:", style='Normal').alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_cust = doc.add_paragraph()
+    p_cust.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_cust.add_run(title_data.get('customer', '')).bold = True
+
+    # Исполнитель
+    doc.add_paragraph("Исполнитель:", style='Normal').alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_isp = doc.add_paragraph()
+    p_isp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_isp.add_run(title_data.get('company', '')).bold = True
+
+    for _ in range(4): doc.add_paragraph()
+
+    # Блок подписей (Таблица для выравнивания Отчет принят / Отчет передан)
+    table = doc.add_table(rows=1, cols=2)
+    table.width = doc.sections[0].page_width
+    
+    # Левая колонка - Заказчик
+    cell_l = table.rows[0].cells[0]
+    p_l = cell_l.paragraphs[0]
+    p_l.add_run("Отчет принят Заказчиком\n\n______________________\nм.п.")
+    
+    # Правая колонка - Исполнитель
+    cell_r = table.rows[0].cells[1]
+    cell_r.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p_r = cell_r.paragraphs[0]
+    p_r.add_run(f"Отчет передан Исполнителем\n\nДиректор\n\n_______________ / {title_data.get('director', '')}\nм.п.")
 
     doc.add_page_break()
 
@@ -92,10 +133,21 @@ if uploaded_file:
         with st.spinner("Извлечение реквизитов из начала документа..."):
             res = client_ai.chat.completions.create(
                 model="deepseek-chat",
-                messages=[{"role": "user", "content": f"Найди Исполнителя (company), Директора (director), Номер контракта (contract_no) и Предмет (project_name) в тексте: {full_text[:3000]}. Выдай JSON."}],
+                messages=[{"role": "user", "content": f"""
+                    Извлеки данные из начала контракта для титульного листа отчета.
+                    Формат ответа — JSON с ключами:
+                    - contract_no (номер контракта)
+                    - contract_date (дата контракта)
+                    - ikz (Идентификационный код закупки, 36 цифр. Если нет — оставить пустую строку "")
+                    - project_name (полное наименование предмета контракта)
+                    - customer (полное наименование Заказчика)
+                    - company (полное наименование Исполнителя)
+                    - director (ФИО директора Исполнителя)
+                    
+                    Текст: {full_text[:3500]}
+                """}],
                 response_format={ 'type': 'json_object' }
             )
-            st.session_state['title_info'] = json.loads(res.choices[0].message.content)
 
     meta = st.session_state['title_info']
     st.info(f"Объект: {meta.get('project_name', 'Не определен')}")
@@ -148,3 +200,4 @@ if st.session_state['report_buffer']:
     # Безопасное получение номера контракта для имени файла
     c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
     st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
+
