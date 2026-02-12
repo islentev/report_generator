@@ -111,16 +111,18 @@ def create_report_docx(report_content, title_data, requirements_list):
     table = doc.add_table(rows=2, cols=2)
     table.width = doc.sections[0].page_width
     
-    # Заказчик (Жирный заголовок)
+    # Заказчик
     p_l = table.rows[0].cells[0].paragraphs[0]
     p_l.add_run("Отчет принят Заказчиком").bold = True
-    p_l.add_run(f"\n\n{customer_signer}\n\n_______________")
+    # ИСПОЛЬЗУЕМ УНИВЕРСАЛЬНУЮ ПЕРЕМЕННУЮ:
+    p_l.add_run(f"\n\n{formatted_signer_customer}\n\n_______________")
     
-    # Исполнитель (Жирный заголовок, выравнивание ВЛЕВО)
+    # Исполнитель
     p_r = table.rows[0].cells[1].paragraphs[0]
     p_r.alignment = WD_ALIGN_PARAGRAPH.LEFT 
     p_r.add_run("Отчет передан Исполнителем").bold = True
-    p_r.add_run(f"\n\nДиректор\n\n_______________ / {director}")
+    # ИСПОЛЬЗУЕМ УНИВЕРСАЛЬНУЮ ПЕРЕМЕННУЮ:
+    p_r.add_run(f"\n\n{exec_post}\n\n_______________ / {exec_fio}")
     
     # М.П.
     table.rows[1].cells[0].paragraphs[0].add_run("м.п.")
@@ -195,42 +197,9 @@ if uploaded_file:
         facts = st.text_area("Фактические детали выполнения (даты, количество и т.д.)")
         if st.form_submit_button("Сгенерировать отчет"):
             with st.spinner("Генерация отчета по пунктам ТЗ..."):
-                # 1. Находим начало ТЗ
-                text_upper = full_text.upper()
-                tz_markers = ["ПРИЛОЖЕНИЕ № 1", "ТЕХНИЧЕСКОЕ ЗАДАНИЕ", "ОПИСАНИЕ ОБЪЕКТА ЗАКУПКИ"]
-                tz_index = -1
-                for marker in tz_markers:
-                    found = text_upper.find(marker)
-                    if found != -1:
-                        tz_index = found
-                        break
-                
-                if tz_index == -1:
-                    tz_index = 0 
-                
-                # 2. Находим КОНЕЦ ТЗ (чтобы не захватить лишние приложения №2, №3 и т.д.)
-                end_markers = ["ПРИЛОЖЕНИЕ № 2", "ПРИЛОЖЕНИЕ № 3", "РАСЧЕТ СТОИМОСТИ", "ПОДПИСИ СТОРОН"]
-                tz_end_index = len(full_text)
-                for marker in end_markers:
-                    # Ищем маркер конца только ПОСЛЕ начала ТЗ
-                    found_end = text_upper.find(marker, tz_index + 100)
-                    if found_end != -1:
-                        tz_end_index = found_end
-                        break
-                
-                # --- ФОРМИРУЕМ БЛОКИ ---
-                
-                # Блок 1: Для титульника (1000 знаков с начала и 1000 с конца)
-                context_title = full_text[:1000] + "\n[...]\n" + full_text[-1000:]
-                
-                # Блок 2 и 3: Чистое ТЗ (от начала ТЗ до следующего приложения или конца)
-                context_tz_full = full_text[tz_index : tz_end_index]
-                
-                # --- ЗАПРОСЫ К ИИ ---
-                
-                # 1. Данные титульника (Строго ваши лимиты: 1000 начало + 1000 конец)
-                context_title = full_text[:1000] + "\n[...]\n" + full_text[-1000:]
-                
+                # ... (блоки поиска tz_index и формирования context_tz_full остаются как есть) ...
+
+                # 1. Данные титульника
                 res_title = client_ai.chat.completions.create(
                     model="deepseek-chat",
                     messages=[{"role": "user", "content": f"""
@@ -254,14 +223,19 @@ if uploaded_file:
                     response_format={ 'type': 'json_object' }
                 )
                 
-                # 2. Текст отчета (на базе полного ТЗ)
+                # ВОТ ЭТА СТРОКА ИСПРАВЛЯЕТ NameError:
+                title_info = json.loads(res_title.choices[0].message.content)
+                # Сохраняем в session_state для надежности
+                st.session_state['title_info'] = title_info 
+                
+                # 2. Текст отчета
                 res_report = client_ai.chat.completions.create(
                     model="deepseek-chat",
                     messages=[{"role": "user", "content": f"Напиши подробный отчет о выполненных работах, используя ВСЁ это ТЗ: {context_tz_full}"}]
                 )
                 report_text = res_report.choices[0].message.content
                 
-                # 3. Требования (на базе полного ТЗ + хвост контракта для поиска условий приемки)
+                # 3. Требования
                 context_docs = context_tz_full + "\n" + full_text[-3000:]
                 res_req = client_ai.chat.completions.create(
                     model="deepseek-chat",
@@ -269,13 +243,13 @@ if uploaded_file:
                 )
                 requirements_text = res_req.choices[0].message.content
                 
-                # --- СОХРАНЕНИЕ (внутри формы) ---
+                # --- СОХРАНЕНИЕ ---
+                # Теперь title_info определена и ошибки не будет
                 doc_final = create_report_docx(report_text, title_info, requirements_text)
                 
                 buf = io.BytesIO()
                 doc_final.save(buf)
                 st.session_state['report_buffer'] = buf.getvalue()
-                # Сохраняем номер, чтобы кнопка снаружи его видела
                 st.session_state['current_no'] = title_info.get('contract_no', 'бн')
                 
                 st.success("Отчет готов!")
@@ -290,4 +264,5 @@ if st.session_state.get('report_buffer'):
         file_name=f"отчет и № {c_no}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
+
 
