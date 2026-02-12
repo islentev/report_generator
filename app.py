@@ -27,9 +27,17 @@ except Exception as e:
 
 # --- 3. ФУНКЦИЯ СОЗДАНИЯ DOCX ---
 def create_report_docx(report_content, title_data, requirements_list):
-    # ... (начало функции, извлечение переменных) ...
+    doc = Document()
+
+    # Извлекаем все нужные данные из словаря title_data
+    company = title_data.get('company', '')
+    director = title_data.get('director', '')
+    contract_no = title_data.get('contract_no', '')
+    contract_date = title_data.get('contract_date', '___')
+    project_name = title_data.get('project_name', '').upper() # Принудительно в верхний регистр
+    customer = title_data.get('customer', '')
     customer_signer = title_data.get('customer_signer', '________________')
-    director = title_data.get('director', '________________')
+    ikz = title_data.get('ikz', '')
 
     # --- Блок подписей ---
     table = doc.add_table(rows=2, cols=2) # Делаем 2 ряда, чтобы разнести подпись и "м.п."
@@ -228,6 +236,7 @@ if uploaded_file:
 if st.session_state.get('report_buffer'):
     c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
     st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
+
 
 
 
