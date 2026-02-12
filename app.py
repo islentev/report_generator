@@ -28,6 +28,11 @@ except Exception as e:
 # --- 3. ФУНКЦИЯ СОЗДАНИЯ DOCX ---
 def create_report_docx(report_content, title_data, requirements_list):
     doc = Document()
+
+    # --- ДОБАВЬТЕ ЭТИ СТРОКИ ЗДЕСЬ ---
+    company = title_data.get('company', '')
+    director = title_data.get('director', '')
+    # --------------------------------
     
     # Настройка стиля по умолчанию (Times New Roman 12)
     style = doc.styles['Normal']
@@ -199,6 +204,7 @@ if uploaded_file:
 if st.session_state.get('report_buffer'):
     c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
     st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
+
 
 
 
