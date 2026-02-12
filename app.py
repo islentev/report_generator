@@ -233,22 +233,24 @@ if uploaded_file:
                 )
                 requirements_text = res_req.choices[0].message.content
                 
-                # --- СОХРАНЕНИЕ ---
-                # Вызываем вашу функцию создания документа (убедитесь, что она определена выше)
+                # --- СОХРАНЕНИЕ (внутри формы) ---
                 doc_final = create_report_docx(report_text, title_info, requirements_text)
                 
                 buf = io.BytesIO()
                 doc_final.save(buf)
                 st.session_state['report_buffer'] = buf.getvalue()
+                # Сохраняем номер, чтобы кнопка снаружи его видела
+                st.session_state['current_no'] = title_info.get('contract_no', 'бн')
                 
-                # Кнопка скачивания
-                if st.session_state.get('report_buffer'):
-                    # Очищаем номер контракта от запрещенных символов для имени файла
-                    raw_no = title_info.get('contract_no', 'бн')
-                    c_no = re.sub(r'[\\/*?:"<>|]', "_", str(raw_no))
-                    st.download_button(
-                        label=f"📥 Скачать отчет № {c_no}",
-                        data=st.session_state['report_buffer'],
-                        file_name=f"отчет и № {c_no}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
+                st.success("Отчет готов!")
+
+# --- КНОПКА СКАЧИВАНИЯ (ВНЕ ФОРМЫ - без отступов) ---
+if st.session_state.get('report_buffer'):
+    raw_no = st.session_state.get('current_no', 'бн')
+    c_no = re.sub(r'[\\/*?:"<>|]', "_", str(raw_no))
+    st.download_button(
+        label=f"📥 Скачать отчет № {c_no}",
+        data=st.session_state['report_buffer'],
+        file_name=f"отчет и № {c_no}.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
