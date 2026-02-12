@@ -120,6 +120,7 @@ if user_pass != APP_PASSWORD: st.stop()
 uploaded_file = st.file_uploader("Загрузите контракт (DOCX)", type="docx")
 
 if uploaded_file:
+    # Если загружен новый файл — сбрасываем старые данные
     if 'last_file' not in st.session_state or st.session_state.last_file != uploaded_file.name:
         st.session_state.title_info = None
         st.session_state.report_buffer = None
@@ -128,9 +129,9 @@ if uploaded_file:
     doc_obj = Document(uploaded_file)
     full_text = "\n".join([p.text for p in doc_obj.paragraphs])
     
-    # 1. Распознавание реквизитов (строго из начала - 3000 символов)
-    if not st.session_state.get['title_info']:
-        with st.spinner("Извлечение реквизитов из начала документа..."):
+    # 1. Извлечение реквизитов (строго один раз для файла)
+    if not st.session_state.get('title_info'):
+        with st.spinner("Анализ титульных данных и ИКЗ..."):
             res = client_ai.chat.completions.create(
                 model="deepseek-chat",
                 messages=[{"role": "user", "content": f"""
@@ -138,7 +139,7 @@ if uploaded_file:
                     Формат ответа — JSON с ключами:
                     - contract_no (номер контракта)
                     - contract_date (дата контракта)
-                    - ikz (Идентификационный код закупки, 36 цифр. Если нет — оставить пустую строку "")
+                    - ikz (Идентификационный код закупки, 36 цифр. Если нет — оставить "")
                     - project_name (полное наименование предмета контракта)
                     - customer (полное наименование Заказчика)
                     - company (полное наименование Исполнителя)
@@ -148,6 +149,7 @@ if uploaded_file:
                 """}],
                 response_format={ 'type': 'json_object' }
             )
+            st.session_state['title_info'] = json.loads(res.choices[0].message.content)
 
     meta = st.session_state['title_info']
     st.info(f"Объект: {meta.get('project_name', 'Не определен')}")
@@ -155,9 +157,8 @@ if uploaded_file:
     with st.form("main_form"):
         facts = st.text_area("Фактические детали выполнения (даты, количество и т.д.)")
         if st.form_submit_button("Сгенерировать отчет"):
-            with st.spinner("Точечный анализ: Реквизиты (3к) + ТЗ..."):
-                
-                # Поиск ТЗ с конца документа
+            with st.spinner("Генерация отчета по пунктам ТЗ..."):
+                # Ищем ТЗ с конца документа
                 text_upper = full_text.upper()
                 tz_markers = ["ПРИЛОЖЕНИЕ № 1", "ТЕХНИЧЕСКОЕ ЗАДАНИЕ", "ОПИСАНИЕ ОБЪЕКТА ЗАКУПКИ"]
                 tz_index = -1
@@ -168,7 +169,7 @@ if uploaded_file:
                 
                 clean_tz = full_text[tz_index:] if tz_index != -1 else full_text[-40000:]
     
-                # 2. ВОЗВРАЩЕННЫЙ РАБОЧИЙ ПРОМПТ ДЛЯ ОТЧЕТА
+                # 2. Основной отчет (Ваш проверенный промпт)
                 report_res = client_ai.chat.completions.create(
                     model="deepseek-chat",
                     messages=[
@@ -177,14 +178,13 @@ if uploaded_file:
                     ]
                 )
 
-                # 3. ПОИСК ТРЕБОВАНИЙ К ДОКУМЕНТАЦИИ
-                req_prompt = f"""Внимательно изучи текст ТЗ и выпиши ВСЕ документы, которые Исполнитель обязан предоставить по итогам работ (Акты, фотоотчеты, видео и т.д.). ТЕКСТ ТЗ: {clean_tz}"""
+                # 3. Требования к документации
                 req_res = client_ai.chat.completions.create(
                     model="deepseek-chat",
-                    messages=[{"role": "user", "content": req_prompt}]
+                    messages=[{"role": "user", "content": f"Выпиши списком все отчетные документы (акты, фото, видео) из ТЗ: {clean_tz}"}]
                 )
                 
-                # 4. СОЗДАНИЕ ДОКУМЕНТА
+                # 4. Сборка документа (использует новую функцию с титульником)
                 doc_final = create_report_docx(
                     report_res.choices[0].message.content, 
                     meta, 
@@ -196,8 +196,7 @@ if uploaded_file:
                 st.session_state['report_buffer'] = buf.getvalue()
 
 # Кнопка скачивания
-if st.session_state['report_buffer']:
-    # Безопасное получение номера контракта для имени файла
+if st.session_state.get('report_buffer'):
     c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
     st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
 
