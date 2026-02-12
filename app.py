@@ -175,7 +175,7 @@ if uploaded_file:
                     - director (ФИО директора Исполнителя)
                     
                     Текст для анализа: {full_text[:5000]} {full_text[-3000:]} 
-                """}]
+                """}],
                 response_format={ 'type': 'json_object' }
             )
             st.session_state['title_info'] = json.loads(res.choices[0].message.content)
@@ -228,6 +228,7 @@ if uploaded_file:
 if st.session_state.get('report_buffer'):
     c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
     st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
+
 
 
 
