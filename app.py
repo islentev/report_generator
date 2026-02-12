@@ -197,8 +197,34 @@ if uploaded_file:
         facts = st.text_area("Фактические детали выполнения (даты, количество и т.д.)")
         if st.form_submit_button("Сгенерировать отчет"):
             with st.spinner("Генерация отчета по пунктам ТЗ..."):
-                # ... (блоки поиска tz_index и формирования context_tz_full остаются как есть) ...
+                # --- СНАЧАЛА ОПРЕДЕЛЯЕМ ИНДЕКСЫ И КОНТЕКСТ ---
+                text_upper = full_text.upper()
+                tz_markers = ["ПРИЛОЖЕНИЕ № 1", "ТЕХНИЧЕСКОЕ ЗАДАНИЕ", "ОПИСАНИЕ ОБЪЕКТА ЗАКУПКИ"]
+                tz_index = -1
+                for marker in tz_markers:
+                    found = text_upper.find(marker)
+                    if found != -1:
+                        tz_index = found
+                        break
+                
+                if tz_index == -1:
+                    tz_index = 0 
+                
+                end_markers = ["ПРИЛОЖЕНИЕ № 2", "ПРИЛОЖЕНИЕ № 3", "РАСЧЕТ СТОИМОСТИ", "ПОДПИСИ СТОРОН"]
+                tz_end_index = len(full_text)
+                for marker in end_markers:
+                    found_end = text_upper.find(marker, tz_index + 100)
+                    if found_end != -1:
+                        tz_end_index = found_end
+                        break
+                
+                # --- ТЕПЕРЬ СОЗДАЕМ ПЕРЕМЕННЫЕ КОНТЕКСТА (Важно!) ---
+                # Теперь NameError исчезнет, так как переменная context_title создана ДО запроса
+                context_title = full_text[:1000] + "\n[...]\n" + full_text[-1000:]
+                context_tz_full = full_text[tz_index : tz_end_index]
 
+                # --- ТЕПЕРЬ ДЕЛАЕМ ЗАПРОСЫ К ИИ ---
+                
                 # 1. Данные титульника
                 res_title = client_ai.chat.completions.create(
                     model="deepseek-chat",
@@ -223,9 +249,7 @@ if uploaded_file:
                     response_format={ 'type': 'json_object' }
                 )
                 
-                # ВОТ ЭТА СТРОКА ИСПРАВЛЯЕТ NameError:
                 title_info = json.loads(res_title.choices[0].message.content)
-                # Сохраняем в session_state для надежности
                 st.session_state['title_info'] = title_info 
                 
                 # 2. Текст отчета
@@ -244,7 +268,6 @@ if uploaded_file:
                 requirements_text = res_req.choices[0].message.content
                 
                 # --- СОХРАНЕНИЕ ---
-                # Теперь title_info определена и ошибки не будет
                 doc_final = create_report_docx(report_text, title_info, requirements_text)
                 
                 buf = io.BytesIO()
@@ -264,5 +287,6 @@ if st.session_state.get('report_buffer'):
         file_name=f"отчет и № {c_no}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
+
 
 
