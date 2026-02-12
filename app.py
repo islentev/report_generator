@@ -29,101 +29,77 @@ except Exception as e:
 def create_report_docx(report_content, title_data, requirements_list):
     doc = Document()
 
-    # Извлекаем все нужные данные из словаря title_data
+    # Извлекаем данные
     company = title_data.get('company', '')
     director = title_data.get('director', '')
     contract_no = title_data.get('contract_no', '')
     contract_date = title_data.get('contract_date', '___')
-    project_name = title_data.get('project_name', '').upper() # Принудительно в верхний регистр
+    # 3. ПРИНУДИТЕЛЬНО БОЛЬШИЕ БУКВЫ для предмета
+    project_name = title_data.get('project_name', '').upper() 
     customer = title_data.get('customer', '')
+    # 2. ДАННЫЕ ЗАКАЗЧИКА (Должность и ФИО)
     customer_signer = title_data.get('customer_signer', '________________')
     ikz = title_data.get('ikz', '')
 
-    # --- Блок подписей ---
-    table = doc.add_table(rows=2, cols=2) # Делаем 2 ряда, чтобы разнести подпись и "м.п."
-    table.width = doc.sections[0].page_width
-    
-    # 1 ряд: Сами подписи
-    cell_l = table.rows[0].cells[0]
-    cell_l.paragraphs[0].add_run(f"Отчет принят Заказчиком\n\n{customer_signer}\n\n______________________")
-    
-    cell_r = table.rows[0].cells[1]
-    cell_r.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    cell_r.paragraphs[0].add_run(f"Отчет передан Исполнителем\n\nДиректор\n\n________________ / {director}")
-    
-    # 2 ряд: "м.п." под линиями с левой стороны
-    cell_l_mp = table.rows[1].cells[0]
-    cell_l_mp.paragraphs[0].add_run("м.п.")
-    
-    cell_r_mp = table.rows[1].cells[1]
-    cell_r_mp.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT # Чтобы было под линией Исполнителя
-    # Но внутри ячейки текст "м.п." будет с левой стороны самой ячейки, если нужно выровнять по-другому:
-    p_mp_r = cell_r_mp.paragraphs[0]
-    p_mp_r.alignment = WD_ALIGN_PARAGRAPH.LEFT # м.п. будет слева под правой линией
-    
-    # Настройка стиля по умолчанию (Times New Roman 12)
+    # Настройка стиля
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
 
-    # 1. ТИТУЛЬНЫЙ ЛИСТ (Один в один по примеру)
-    # Шапка: Название и ИКЗ
+    # --- 1. ТИТУЛЬНЫЙ ЛИСТ ---
     p_top = doc.add_paragraph()
     p_top.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_top.add_run("Информационно-аналитический отчет об исполнении условий\n").bold = True
-    p_top.add_run(f"Контракта № {title_data.get('contract_no', '')} от «{title_data.get('contract_date', '___')}» 2025 г.\n")
-    
-    ikz = title_data.get('ikz', '')
+    p_top.add_run(f"Контракта № {contract_no} от «{contract_date}» 2025 г.\n")
     p_top.add_run(f"Идентификационный код закупки: {ikz if ikz else '___________________________'}.")
 
     for _ in range(3): doc.add_paragraph()
 
-    # ТОМ I
     p_tom = doc.add_paragraph()
     p_tom.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_tom.add_run("ТОМ I").bold = True
 
-    # Предмет КОНТРАКТА
     p_subj_head = doc.add_paragraph()
     p_subj_head.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_subj_head.add_run("Наименование предмета КОНТРАКТА:").font.size = Pt(11)
     
     p_subj = doc.add_paragraph()
     p_subj.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_subj.add_run(title_data.get('project_name', '')).bold = True
+    p_subj.add_run(project_name).bold = True
 
-    # Заказчик
     doc.add_paragraph("Заказчик:", style='Normal').alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_cust = doc.add_paragraph()
-    p_cust.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_cust.add_run(title_data.get('customer', '')).bold = True
+    doc.add_paragraph(customer).alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # Исполнитель
     doc.add_paragraph("Исполнитель:", style='Normal').alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_isp = doc.add_paragraph()
-    p_isp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_isp.add_run(title_data.get('company', '')).bold = True
+    doc.add_paragraph(company).alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    for _ in range(4): doc.add_paragraph()
+    for _ in range(3): doc.add_paragraph()
 
-    # Блок подписей (Таблица для выравнивания Отчет принят / Отчет передан)
-    table = doc.add_table(rows=1, cols=2)
+    # --- 1. ТАБЛИЦА ПОДПИСЕЙ (ТОЛЬКО ВНИЗУ ТИТУЛЬНИКА) ---
+    # Создаем таблицу 2 ряда на 2 колонки
+    table = doc.add_table(rows=2, cols=2)
     table.width = doc.sections[0].page_width
     
-    # Левая колонка - Заказчик
+    # Ряд 1: Текст подписей
     cell_l = table.rows[0].cells[0]
-    p_l = cell_l.paragraphs[0]
-    p_l.add_run("Отчет принят Заказчиком\n\n______________________\nм.п.")
+    cell_l.paragraphs[0].add_run(f"Отчет принят Заказчиком\n\n{customer_signer}\n\n______________________")
     
-    # Правая колонка - Исполнитель
     cell_r = table.rows[0].cells[1]
     cell_r.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p_r = cell_r.paragraphs[0]
-    p_r.add_run(f"Отчет передан Исполнителем\n\nДиректор\n\n_______________ / {title_data.get('director', '')}\nм.п.")
+    cell_r.paragraphs[0].add_run(f"Отчет передан Исполнителем\n\nДиректор {company}\n\n________________ / {director}")
+    
+    # Ряд 2: 4. "м.п." С ЛЕВОЙ СТОРОНЫ ОТ ЧЕРТЫ
+    cell_l_mp = table.rows[1].cells[0]
+    cell_l_mp.paragraphs[0].add_run("м.п.")
+    
+    cell_r_mp = table.rows[1].cells[1]
+    # Для правой колонки выравниваем по левому краю ячейки, чтобы м.п. было перед подписью
+    cell_r_mp.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT 
+    cell_r_mp.paragraphs[0].add_run("м.п.")
 
     doc.add_page_break()
 
-    # 2. ОСНОВНОЙ ТЕКСТ ОТЧЕТА
+    # --- 2. ОСНОВНОЙ ТЕКСТ ---
     doc.add_heading('ОТЧЕТ О ВЫПОЛНЕНИИ ТЕХНИЧЕСКОГО ЗАДАНИЯ', level=1)
     for block in report_content.split('\n\n'):
         p = doc.add_paragraph()
@@ -131,20 +107,14 @@ def create_report_docx(report_content, title_data, requirements_list):
             run = p.add_run(part.replace('*', ''))
             if part in block.split('**')[1::2]: run.bold = True
     
-    # ПОДПИСЬ ДИРЕКТОРА СРАЗУ ПОСЛЕ ОТЧЕТА
-    p_sign = doc.add_paragraph()
-    p_sign.add_run(f"\n\nДиректор {company}  _________________ / {director}")
-
     doc.add_page_break()
 
-    # 3. ОТДЕЛЬНАЯ СТРАНИЦА: ТРЕБОВАНИЯ К ДОКУМЕНТАЦИИ
+    # --- 3. ТРЕБОВАНИЯ ---
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
-    doc.add_paragraph("Перечень документов, обязательных к предоставлению Заказчику согласно условиям ТЗ:")
-    p_req = doc.add_paragraph()
-    p_req.add_run(requirements_list)
+    doc.add_paragraph(requirements_list)
 
     return doc
-
+    
 # --- 4. ОСНОВНОЙ БЛОК ЛОГИКИ ---
 user_pass = st.sidebar.text_input("Пароль", type="password")
 if user_pass != APP_PASSWORD: st.stop()
@@ -236,6 +206,7 @@ if uploaded_file:
 if st.session_state.get('report_buffer'):
     c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
     st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
+
 
 
 
