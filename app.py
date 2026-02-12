@@ -31,22 +31,27 @@ def create_report_docx(report_content, title_data, requirements_list):
     
     # ФУНКЦИЯ ДЛЯ ФАМИЛИИ С ИНИЦИАЛАМИ (Гринин Е.В.)
     def format_name(full_name):
+        if not full_name: return ""
         parts = full_name.split()
         if len(parts) >= 3:
             return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
         return full_name
 
-    # Данные из title_data (БЕЗ принудительного капслока)
-    contract_no = title_data.get('contract_no', '')
+    # Извлечение данных
+    contract_no = title_data.get('contract_no', '________________')
     contract_date = title_data.get('contract_date', '___')
     ikz = title_data.get('ikz', '')
-    project_name = title_data.get('project_name', '') # Берем как есть в контракте
+    
+    # Чтобы предмет не начинался с маленькой буквы, используем capitalize() или оставляем как есть, если там уже заглавная
+    raw_project_name = title_data.get('project_name', '')
+    project_name = raw_project_name[0].upper() + raw_project_name[1:] if raw_project_name else ""
+    
     customer = title_data.get('customer', '')
-    customer_signer = title_data.get('customer_signer', '')
+    customer_signer = title_data.get('customer_signer', '________________') # Здесь должна быть должность + ФИО
     company = title_data.get('company', '')
     director = format_name(title_data.get('director', ''))
 
-    # Настройка стиля по умолчанию (Times New Roman 12)
+    # Настройка стиля (Times New Roman 12)
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
@@ -55,7 +60,7 @@ def create_report_docx(report_content, title_data, requirements_list):
     p_top = doc.add_paragraph()
     p_top.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # 1. ЖИРНЫМ: Заголовок и Контракт
+    # ЖИРНЫМ: Заголовок и Контракт
     run1 = p_top.add_run("Информационно-аналитический отчет об исполнении условий\n")
     run1.bold = True
     run2 = p_top.add_run(f"Контракта № {contract_no} от «{contract_date}» 2025 г.\n")
@@ -71,24 +76,32 @@ def create_report_docx(report_content, title_data, requirements_list):
     p_tom.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_tom.add_run("ТОМ I").bold = True
 
-    # 2. КУРСИВОМ (Предмет, Заказчик, Исполнитель)
-    # Наименование предмета
-    doc.add_paragraph("Наименование предмета КОНТРАКТА :").alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Наименование предмета (Заголовок ЖИРНЫМ, текст КУРСИВОМ)
+    p_subj_h = doc.add_paragraph()
+    p_subj_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_subj_h.add_run("Наименование предмета КОНТРАКТА :").bold = True
+    
     p_subj = doc.add_paragraph()
     p_subj.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_subj.add_run(project_name).italic = True # ТОЛЬКО КУРСИВ
+    p_subj.add_run(project_name).italic = True
 
-    # Заказчик
-    doc.add_paragraph("Заказчик:").alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Заказчик (Заголовок ЖИРНЫМ, текст КУРСИВОМ)
+    p_cust_h = doc.add_paragraph()
+    p_cust_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_cust_h.add_run("Заказчик:").bold = True
+    
     p_cust = doc.add_paragraph()
     p_cust.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_cust.add_run(customer).italic = True # ТОЛЬКО КУРСИВ
+    p_cust.add_run(customer).italic = True
 
-    # Исполнитель
-    doc.add_paragraph("Исполнитель:").alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Исполнитель (Заголовок ЖИРНЫМ, текст КУРСИВОМ)
+    p_isp_h = doc.add_paragraph()
+    p_isp_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_isp_h.add_run("Исполнитель:").bold = True
+    
     p_isp = doc.add_paragraph()
     p_isp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_isp.add_run(company).italic = True # ТОЛЬКО КУРСИВ
+    p_isp.add_run(company).italic = True
 
     for _ in range(4): doc.add_paragraph()
 
@@ -96,15 +109,18 @@ def create_report_docx(report_content, title_data, requirements_list):
     table = doc.add_table(rows=2, cols=2)
     table.width = doc.sections[0].page_width
     
-    # ЗАКАЗЧИК (слева)
+    # ЗАКАЗЧИК (слева). Заголовок ЖИРНЫМ.
     cell_l = table.rows[0].cells[0]
-    cell_l.paragraphs[0].add_run(f"Отчет принят Заказчиком\n\n{customer_signer}\n\n_______________")
+    p_l = cell_l.paragraphs[0]
+    p_l.add_run("Отчет принят Заказчиком").bold = True
+    p_l.add_run(f"\n\n{customer_signer}\n\n_______________")
     
-    # ИСПОЛНИТЕЛЬ (справа, выравнивание влево внутри ячейки)
+    # ИСПОЛНИТЕЛЬ (справа). Заголовок ЖИРНЫМ.
     cell_r = table.rows[0].cells[1]
     p_r = cell_r.paragraphs[0]
     p_r.alignment = WD_ALIGN_PARAGRAPH.LEFT 
-    p_r.add_run(f"Отчет передан Исполнителем\n\nДиректор\n\n_______________ / {director}")
+    p_r.add_run("Отчет передан Исполнителем").bold = True
+    p_r.add_run(f"\n\nДиректор\n\n_______________ / {director}")
     
     # м.п. под чертой
     table.rows[1].cells[0].paragraphs[0].add_run("м.п.")
@@ -114,10 +130,6 @@ def create_report_docx(report_content, title_data, requirements_list):
 
     # --- ТЕКСТ ОТЧЕТА ---
     doc.add_heading('ОТЧЕТ О ВЫПОЛНЕНИИ ТЕХНИЧЕСКОГО ЗАДАНИЯ', level=1)
-    # Применяем шрифт к заголовку отдельно, так как heading может его сбрасывать
-    for run in doc.paragraphs[-1].runs:
-        run.font.name = 'Times New Roman'
-
     for block in report_content.split('\n\n'):
         p = doc.add_paragraph()
         for part in block.split('**'):
@@ -223,6 +235,7 @@ if uploaded_file:
 if st.session_state.get('report_buffer'):
     c_no = re.sub(r'[\\/*?:"<>|]', "_", str(meta.get('contract_no', '')))
     st.download_button(f"📥 Скачать отчет № {c_no}", st.session_state['report_buffer'], f"отчет и № {c_no}.docx")
+
 
 
 
