@@ -8,18 +8,31 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from openai import OpenAI
 
 # ─── ФУНКЦИЯ ФОРМАТИРОВАНИЯ ФИО ────────────────────────────────────────
-def format_fio_universal(raw_fio):
-    if not raw_fio or len(raw_fio.strip()) < 3:
+def universal_formatter(text, is_fio=False):
+    if not text or len(str(text)) < 3:
         return "________________"
-    # Убираем возможные должности/мусор, которые ИИ мог прихватить
-    clean = re.sub(r'(директор|министр|заместитель|начальник|председатель|генеральный|зам|и\.о\.|исполняющий|обязанности)',
-                   '', raw_fio, flags=re.IGNORECASE).strip()
-    parts = clean.split()
-    if len(parts) >= 3:
-        return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
-    if len(parts) == 2:
-        return f"{parts[0]} {parts[1][0]}."
-    return clean or "________________"
+    
+    # 1. Если это ФИО (Куц С.В., Гринин Е.В.)
+    if is_fio:
+        # Убираем все лишние слова (должности), оставляем только слова с большой буквы
+        clean_name = re.sub(r'(министр|директор|ген|начальник|заместитель|председатель)', '', text, flags=re.IGNORECASE).strip()
+        parts = clean_name.split()
+        if len(parts) >= 3: # Фамилия Имя Отчество
+            return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
+        elif len(parts) == 2: # Фамилия Имя
+            return f"{parts[0]} {parts[1][0]}."
+        return clean_name
+    
+    # 2. Если это Должность (Министр, Директор)
+    else:
+        # Убираем ФИО, если ИИ их туда засунул, и делаем первую букву заглавной
+        clean_post = text.split()
+        if clean_post:
+            res = clean_post[0].capitalize()
+            if len(clean_post) > 1:
+                res += " " + " ".join(clean_post[1:])
+            return res
+    return text
 
 # ─── ФУНКЦИЯ СОЗДАНИЯ ТОЛЬКО ТИТУЛЬНОГО ЛИСТА ────────────────────────────
 def create_title_only_docx(data):
@@ -248,6 +261,7 @@ if uploaded_file is not None:
 
 st.markdown("---")
 st.caption("После проверки титульника скажите, что получилось — перейдём к шагу 2 (ТЗ и основной отчёт)")
+
 
 
 
