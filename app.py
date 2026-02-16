@@ -7,154 +7,160 @@ import io
 import json
 import re
 
-# --- 1. ФУНКЦИИ ИЗВЛЕЧЕНИЯ (ТОЛЬКО КОПИРОВАНИЕ) ---
+# --- 1. ФУНКЦИИ ИЗВЛЕЧЕНИЯ (БЕЗ ИЗМЕНЕНИЙ) ---
 
-def get_full_text(doc):
-    """Собирает текст параграфов и таблиц в один поток"""
+def get_text_ordered(doc):
+    """Собирает текст документа, сохраняя последовательность параграфов и таблиц"""
     full_text = []
     for element in doc.element.body:
         if element.tag.endswith('p'):
             p = [p for p in doc.paragraphs if p._element == element]
-            if p: full_text.append(p[0].text)
+            if p and p[0].text.strip():
+                full_text.append(p[0].text)
         elif element.tag.endswith('tbl'):
             t = [t for t in doc.tables if t._element == element]
             if t:
                 for row in t[0].rows:
-                    full_text.append(" | ".join(cell.text.strip() for cell in row.cells))
+                    row_data = " | ".join(cell.text.strip() for cell in row.cells)
+                    full_text.append(row_data)
     return "\n".join(full_text)
 
-def find_only_tz_content(text):
-    """Находит начало ТЗ и отрезает всё, что было ДО него"""
-    # Ищем Приложение №1 или Техническое задание
-    match = re.search(r"(ПРИЛОЖЕНИЕ\s*[№N]?\s*1|ТЕХНИЧЕСКОЕ\s*ЗАДАНИЕ)", text, re.IGNORECASE)
-    if not match:
-        return text # Если не нашли маркер, отдаем всё (страховка)
+def slice_only_tz(text):
+    """Механически вырезает кусок, начиная с Приложения 1"""
+    # Ищем маркер начала ТЗ
+    start_match = re.search(r"ПРИЛОЖЕНИЕ\s*[№N]?\s*1", text, re.IGNORECASE)
+    if not start_match:
+        return "ОШИБКА: Заголовок 'Приложение № 1' не найден в документе."
     
-    start_pos = match.start()
-    # Ищем конец ТЗ (Приложение №2)
-    end_match = re.search(r"ПРИЛОЖЕНИЕ\s*[№N]?\s*2", text[start_pos:], re.IGNORECASE)
+    start_idx = start_match.start()
+    
+    # Ищем маркер конца (Приложение 2 или Расчет стоимости)
+    end_match = re.search(r"(ПРИЛОЖЕНИЕ\s*[№N]?\s*2|РАСЧЕТ\s*СТОИМОСТИ)", text[start_idx:], re.IGNORECASE)
     
     if end_match:
-        return text[start_pos : start_pos + end_match.start()]
-    return text[start_pos:]
+        return text[start_idx : start_idx + end_match.start()]
+    else:
+        # Если конца нет, берем все до конца документа
+        return text[start_idx:]
 
-# --- 2. ФИКСИРОВАННЫЙ ТИТУЛЬНИК И СТРУКТУРА ---
+# --- 2. СБОРКА DOCX (ФИКСИРОВАННЫЙ ТИТУЛЬНИК) ---
 
-def create_final_docx(report_body, title_info, requirements):
+def create_final_report(title_data, tz_content, req_content):
     doc = Document()
-    t = title_info
+    t = title_data
 
-    # --- БЛОК 1: ТИТУЛЬНЫЙ ЛИСТ (ЗАФИКСИРОВАНО) ---
+    # ШРИФТ ПО УМОЛЧАНИЮ
+    style = doc.styles['Normal']
+    style.font.name = 'Times New Roman'
+    style.font.size = Pt(12)
+
+    # --- БЛОК 1: ТИТУЛЬНИК (ЗАФИКСИРОВАНО) ---
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run(f"Информационно-аналитический отчет об исполнении условий\n")
-    run.bold = True
-    run2 = p.add_run(f"Контракта № {t.get('contract_no', '___')} от {t.get('contract_date', '___')}\n")
-    run2.bold = True
-    p.add_run(f"Идентификационный код закупки: {t.get('ikz', '___')}")
+    p.add_run(f"Информационно-аналитический отчет об исполнении условий\n").bold = True
+    p.add_run(f"Контракта № {t.get('contract_no')} от «{t.get('contract_date')}» 2025 г.\n").bold = True
+    p.add_run(f"Идентификационный код закупки: {t.get('ikz')}.")
 
     for _ in range(5): doc.add_paragraph()
     doc.add_paragraph("ТОМ I").alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    labels = [("Наименование предмета КОНТРАКТА :", t.get('project_name')), 
-              ("Заказчик:", t.get('customer')), 
-              ("Исполнитель:", t.get('company'))]
-    
-    for label, val in labels:
-        p1 = doc.add_paragraph(); p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p1.add_run(label).bold = True
-        p2 = doc.add_paragraph(); p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p2.add_run(str(val)).italic = True
+    for label, val in [("Наименование предмета КОНТРАКТА :", t.get('project_name')), 
+                      ("Заказчик:", t.get('customer')), 
+                      ("Исполнитель:", t.get('company'))]:
+        p_l = doc.add_paragraph(); p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_l.add_run(label).bold = True
+        p_v = doc.add_paragraph(); p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_v.add_run(str(val)).italic = True
 
     for _ in range(5): doc.add_paragraph()
     
-    table = doc.add_table(rows=1, cols=2)
-    table.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{t.get('customer_fio', '___')}\n\n___________"
-    table.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{t.get('director', '___')}\n\n___________"
+    tab = doc.add_table(rows=1, cols=2)
+    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{t.get('customer_fio')}\n\n___________ / С.В. Куц"
+    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{t.get('director')}\n\n___________ / Е.В. Гринин"
 
     doc.add_page_break()
 
-    # --- БЛОК 2: ОТЧЕТ (ЧИСТОЕ КОПИРОВАНИЕ ТЗ) ---
+    # --- БЛОК 2: ОТЧЕТ (ПРОСТОЕ КОПИРОВАНИЕ) ---
     doc.add_heading('ОТЧЕТ О ВЫПОЛНЕНИИ ТЕХНИЧЕСКОГО ЗАДАНИЯ', level=1)
-    doc.add_paragraph(report_body)
+    doc.add_paragraph(tz_content)
 
     doc.add_page_break()
 
-    # --- БЛОК 3: ТРЕБОВАНИЯ (ЗАФИКСИРОВАНО) ---
+    # --- БЛОК 3: ТРЕБОВАНИЯ (К ДОКУМЕНТАЦИИ) ---
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
-    doc.add_paragraph(requirements)
+    doc.add_paragraph(req_content)
 
     return doc
 
-# --- 3. ИНТЕРФЕЙС ---
+# --- 3. СТРИМЛИТ ИНТЕРФЕЙС ---
 
-st.set_page_config(page_title="Генератор (Только Копирование)")
+st.set_page_config(page_title="Генератор Отчетов (Поэтапный)")
 
-# Проверка пароля
-if "pass_ok" not in st.session_state: st.session_state.pass_ok = False
-if not st.session_state.pass_ok:
-    if st.text_input("Пароль", type="password") == st.secrets["APP_PASSWORD"]:
-        st.session_state.pass_ok = True
+# Пароль (возвращаем как было)
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    pwd = st.text_input("Введите пароль", type="password")
+    if pwd == st.secrets["APP_PASSWORD"]:
+        st.session_state.authenticated = True
         st.rerun()
     st.stop()
 
-file = st.file_uploader("Загрузите контракт", type="docx")
+uploaded_file = st.file_uploader("Загрузите файл", type="docx")
 
-if file:
-    # ОБНУЛЕНИЕ ПРИ НОВОМ ФАЙЛЕ
-    if "current_fname" not in st.session_state or st.session_state.current_fname != file.name:
+if uploaded_file:
+    # ПОЛНОЕ ОБНУЛЕНИЕ ПРИ ЗАГРУЗКЕ НОВОГО ФАЙЛА
+    if "current_file" not in st.session_state or st.session_state.current_file != uploaded_file.name:
         st.session_state.clear()
-        st.session_state.current_fname = file.name
-        st.session_state.pass_ok = True # Чтобы не выкинуло
+        st.session_state.authenticated = True # Сохраняем вход
+        st.session_state.current_file = uploaded_file.name
         st.rerun()
 
-    doc_obj = Document(file)
-    text_data = get_full_text(doc_obj)
+    doc_obj = Document(uploaded_file)
+    text_data = get_text_ordered(doc_obj)
     client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
 
-    if st.button("Шаг 1: Подготовить Титульник"):
-        # Реквизиты берем из начала и конца
-        ctx = text_data[:4000] + text_data[-4000:]
+    # ШАГ 1: ТИТУЛЬНИК
+    if st.button("Шаг 1: Сформировать Титульник"):
+        # Даем ИИ только начало и конец для реквизитов
+        context = text_data[:4000] + text_data[-4000:]
         res = client.chat.completions.create(
             model="deepseek-chat",
-            messages=[{"role": "user", "content": f"Верни JSON: contract_no, contract_date, ikz, project_name, customer, customer_fio, company, director. Текст: {ctx}"}],
+            messages=[{"role": "user", "content": f"Верни JSON: contract_no, contract_date, ikz, project_name, customer, customer_fio, company, director. Текст: {context}"}],
             response_format={'type': 'json_object'}
         )
         st.session_state.title_data = json.loads(res.choices[0].message.content)
-        st.success("Титульник готов")
+        st.success("Титульник зафиксирован")
 
-    if st.session_state.get("title_data"):
-        if st.button("Шаг 2: Создать отчет (Полное копирование ТЗ)"):
-            with st.spinner("Ищу ТЗ и копирую..."):
-                # Находим только мясо ТЗ
-                pure_tz = find_only_tz_content(text_data)
-                
-                # Команда ИИ: просто перенести текст без изменений
-                res_copy = client.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[
-                        {"role": "system", "content": "Ты — технический копировщик. Твоя единственная задача: ПЕРЕНЕСТИ ТЕКСТ ТЗ ПОЛНОСТЬЮ. Не сокращай, не меняй время глаголов, не делай выводы. Просто выдай тот же текст, что тебе прислали."},
-                        {"role": "user", "content": f"СКОПИРУЙ ЭТОТ ТЕКСТ БЕЗ ИЗМЕНЕНИЙ:\n\n{pure_tz}"}
-                    ]
-                )
-                
-                # Доп. требования (поиск фото и т.д.)
-                res_req = client.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"Найди требования к фотоотчету и количеству фото в этом тексте: {pure_tz[-5000:]}"}]
-                )
-                
-                # Сборка итогового файла
-                final_file = create_final_docx(
-                    res_copy.choices[0].message.content, 
-                    st.session_state.title_data, 
-                    res_req.choices[0].message.content
-                )
-                
-                buf = io.BytesIO()
-                final_file.save(buf)
-                st.session_state.final_out = buf.getvalue()
-                st.success("Отчет собран")
+    # ШАГ 2: ОТЧЕТ
+    if "title_data" in st.session_state:
+        if st.button("Шаг 2: Скопировать ТЗ в отчет"):
+            # 1. Программная вырезка (ИИ не увидит ничего кроме ТЗ)
+            pure_tz = slice_only_tz(text_data)
+            
+            # 2. Передаем ИИ с запретом на изменения
+            res_tz = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": "Ты — копировальный аппарат. Твоя задача: взять текст и выдать его БЕЗ ИЗМЕНЕНИЙ. Не меняй время, не сокращай, не добавляй вводных слов. Просто копия текста."},
+                    {"role": "user", "content": f"СКОПИРУЙ ЭТОТ ТЕКСТ ПОЛНОСТЬЮ:\n\n{pure_tz}"}
+                ]
+            )
+            
+            # 3. Доп требования (поиск фото)
+            res_req = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": f"Выпиши требования к количеству фото и документам для сдачи из этого текста: {pure_tz[-5000:]}"}]
+            )
+            
+            # Генерация
+            final_doc = create_final_report(st.session_state.title_data, res_tz.choices[0].message.content, res_req.choices[0].message.content)
+            
+            buf = io.BytesIO()
+            final_doc.save(buf)
+            st.session_state.result_file = buf.getvalue()
+            st.success("Отчет готов (ТЗ скопировано полностью)")
 
-    if st.session_state.get("final_out"):
-        st.download_button("📥 Скачать готовый отчет", st.session_state.final_out, "Full_Copy_Report.docx")
+    if "result_file" in st.session_state:
+        st.download_button("📥 Скачать отчет", st.session_state.result_file, "Report_Fixed.docx")
