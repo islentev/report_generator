@@ -25,7 +25,7 @@ def format_fio_universal(raw_fio):
 def create_title_only_docx(data):
     doc = Document()
 
-    # Базовый стиль
+    # Базовый стиль — Times New Roman 12 pt для всего документа
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
@@ -36,10 +36,14 @@ def create_title_only_docx(data):
     run = p.add_run("Информационно-аналитический отчет об исполнении условий\n")
     run.bold = True
     run.font.size = Pt(14)
+    run.font.name = 'Times New Roman'
     run = p.add_run(f"Контракта № {data.get('contract_no', '—')} от {data.get('contract_date', '—')}\n")
     run.bold = True
     run.font.size = Pt(14)
-    p.add_run(f"Идентификационный код закупки: {data.get('ikz', '—')}.")
+    run.font.name = 'Times New Roman'
+    run = p.add_run(f"Идентификационный код закупки: {data.get('ikz', '—')}.")
+    run.font.name = 'Times New Roman'
+    run.font.size = Pt(12)
 
     # Отступы
     for _ in range(5):
@@ -48,44 +52,63 @@ def create_title_only_docx(data):
     # ТОМ I
     p = doc.add_paragraph("ТОМ I")
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.runs[0].bold = True
-    p.runs[0].font.size = Pt(14)
+    run = p.runs[0]
+    run.bold = True
+    run.font.size = Pt(14)
+    run.font.name = 'Times New Roman'
 
     for _ in range(4):
         doc.add_paragraph()
 
-    # Таблица подписей (3 строки × 2 столбца)
+    # Таблица подписей
     table = doc.add_table(rows=3, cols=2)
     table.autofit = True
     table.allow_autofit = True
 
-    # Заголовки жирным
+    # Заголовки
     table.cell(0, 0).text = "Отчет принят Заказчиком"
     table.cell(0, 1).text = "Отчет передан Исполнителем"
     for cell in table.rows[0].cells:
-        run = cell.paragraphs[0].runs[0]
-        run.bold = True
+        for p in cell.paragraphs:
+            for r in p.runs:
+                r.bold = True
+                r.font.name = 'Times New Roman'
+                r.font.size = Pt(12)
+            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT   # ← ПРАВОЕ выравнивание
 
-    # Должности
-    table.cell(1, 0).text = data.get('customer_post_full', '_______________________________')
-    table.cell(1, 1).text = data.get('executor_post', 'Директор')
+    # Должности (только чистая должность)
+    table.cell(1, 0).text = data.get('customer_post', 'Министр')
+    table.cell(1, 1).text = data.get('executor_post', 'Генеральный директор')
+    for row in table.rows[1:2]:  # только строки с должностями
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                for r in p.runs:
+                    r.font.name = 'Times New Roman'
+                    r.font.size = Pt(12)
+                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
-    # Подписи
-    p_left = table.cell(2, 0).add_paragraph()
-    p_left.add_run("_______________ ").font.size = Pt(12)
-    p_left.add_run(f"{data.get('customer_fio', '________________')} м.п.")
+    # Подписи + м.п. ниже линии
+    for col, fio_key in enumerate(['customer_fio', 'executor_fio']):
+        cell = table.cell(2, col)
+        cell.text = ""  # очищаем
+        p = cell.add_paragraph()
+        p.add_run("_______________  ").font.name = 'Times New Roman'
+        p.add_run(f"{data.get(fio_key, '________________')}").font.name = 'Times New Roman'
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
-    p_right = table.cell(2, 1).add_paragraph()
-    p_right.add_run("_______________ ").font.size = Pt(12)
-    p_right.add_run(f"{data.get('executor_fio', '________________')} м.п.")
+        p_mp = cell.add_paragraph()           # отдельный параграф для м.п.
+        run_mp = p_mp.add_run("м.п.")
+        run_mp.font.name = 'Times New Roman'
+        run_mp.font.size = Pt(12)
+        p_mp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
-    # Выравнивание по центру во всех ячейках
+    # Общее выравнивание таблицы
     for row in table.rows:
         for cell in row.cells:
-            for paragraph in cell.paragraphs:
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for p in cell.paragraphs:
+                p.paragraph_format.space_after = Pt(0)
+                p.paragraph_format.space_before = Pt(0)
 
-    # Сохраняем в буфер
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
@@ -152,28 +175,28 @@ if uploaded_file is not None:
                     model="deepseek-chat",
                     messages=[{
                         "role": "user",
-                        "content": f"""Извлеки данные ТОЧНО из текста. Ничего не придумывай и не додумывай.
+                        "content": f"""Извлеки данные ТОЧНО из текста. Ничего не придумывай, не перефразируй, не добавляй от себя.
 
-Верни ТОЛЬКО валидный JSON, без лишнего текста.
-
-Ключи (если поле отсутствует — пустая строка или null):
-
-{{
-  "contract_no": "номер контракта",
-  "contract_date_raw": "дата как написана в тексте",
-  "ikz": "36-значный код закупки (только цифры)",
-  "customer_org": "полное наименование заказчика",
-  "customer_post": "должность подписанта заказчика (полностью)",
-  "customer_basis": "основание полномочий (если указано, иначе пустая строка)",
-  "customer_fio_raw": "ФИО подписанта заказчика как в тексте",
-  "executor_org": "полное наименование исполнителя",
-  "executor_post": "должность подписанта исполнителя",
-  "executor_fio_raw": "ФИО подписанта исполнителя как в тексте"
-}}
-
-Текст для анализа (начало + конец документа):
-{context}
-"""
+                        Верни ТОЛЬКО валидный JSON. Никаких пояснений, никакого другого текста.
+                        
+                        Обязательные ключи (если ничего не нашёл — пустая строка или "—"):
+                        
+                        {
+                          "contract_no": "номер контракта, обычно в первой строке, пример: 10/25-ГК",
+                          "contract_date_raw": "дата контракта как написана (пример: «__»____________2025 г.)",
+                          "ikz": "ТОЛЬКО 36-значный идентификационный код закупки, ищи слова 'ИКЗ', 'Идентификационный код закупки'",
+                          "project_name": "наименование предмета контракта / услуги, обычно в пункте 1.1 или в шапке, с большой буквы",
+                          "customer_org": "полное официальное название Заказчика",
+                          "customer_post": "должность подписанта Заказчика, только то слово/фразу, что стоит перед ФИО (Министр, Генеральный директор и т.п.)",
+                          "customer_fio_raw": "ФИО подписанта Заказчика как написано рядом с должностью",
+                          "executor_org": "полное официальное название Исполнителя",
+                          "executor_post": "должность подписанта Исполнителя, только то, что стоит перед ФИО",
+                          "executor_fio_raw": "ФИО подписанта Исполнителя как написано рядом с должностью"
+                        }
+                        
+                        Текст для анализа (начало + конец документа):
+                        {context}
+                                        
                     }],
                     response_format={"type": "json_object"},
                     temperature=0.15,
@@ -224,3 +247,4 @@ if uploaded_file is not None:
 
 st.markdown("---")
 st.caption("После проверки титульника скажите, что получилось — перейдём к шагу 2 (ТЗ и основной отчёт)")
+
