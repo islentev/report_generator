@@ -7,71 +7,79 @@ import io
 import json
 import re
 
-# --- 1. ФУНКЦИИ ЧТЕНИЯ ---
+# --- 1. ОЧИСТКА ТЕКСТА ОТ СИМВОЛОВ ---
 
-def read_docx(file):
+def clean_markdown(text):
+    """Удаляет символы разметки типа ** или #"""
+    text = text.replace('**', '')
+    text = text.replace('###', '')
+    text = text.replace('##', '')
+    text = text.replace('|', '')
+    return text.strip()
+
+def get_text_from_file(file):
     doc = Document(file)
-    full_text = []
-    for element in doc.element.body:
-        if element.tag.endswith('p'):
-            p = [p for p in doc.paragraphs if p._element == element]
-            if p: full_text.append(p[0].text)
-        elif element.tag.endswith('tbl'):
-            t = [t for t in doc.tables if t._element == element]
-            if t:
-                for row in t[0].rows:
-                    full_text.append(" | ".join(cell.text.strip() for cell in row.cells))
-    return "\n".join(full_text)
+    content = []
+    for p in doc.paragraphs:
+        if p.text.strip(): content.append(p.text)
+    for table in doc.tables:
+        for row in table.rows:
+            content.append(" ".join(cell.text.strip() for cell in row.cells))
+    return "\n".join(content)
 
-# --- 2. ФИКСИРОВАННЫЙ ТИТУЛЬНИК ---
+# --- 2. СБОРКА ДОКУМЕНТА (РУКОПИСНЫЙ СТИЛЬ) ---
 
-def create_final_report(title_data, tz_processed, req_data):
+def create_final_report(title_data, report_body, req_body):
     doc = Document()
     t = title_data
+    
+    # Настройка стиля (Times New Roman)
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
 
-    # Титульный лист (СТРОГО ПО ВАШЕМУ ОБРАЗЦУ)
+    # --- БЛОК 1: ТИТУЛЬНИК (БЕЗ ИЗМЕНЕНИЙ) ---
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.add_run(f"Информационно-аналитический отчет об исполнении условий\n").bold = True
-    p.add_run(f"Контракта № {t.get('contract_no')} от «{t.get('contract_date')}» 2025 г.\n").bold = True
-    p.add_run(f"Идентификационный код закупки: {t.get('ikz')}.")
-
+    p.add_run(f"Контракта № {t.get('contract_no', '___')} от «{t.get('contract_date', '___')}» 2025 г.\n").bold = True
+    p.add_run(f"Идентификационный код закупки: {t.get('ikz', '___')}.")
     for _ in range(5): doc.add_paragraph()
     doc.add_paragraph("ТОМ I").alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    for label, val in [("Наименование предмета КОНТРАКТА :", t.get('project_name')), 
-                      ("Заказчик:", t.get('customer')), 
-                      ("Исполнитель:", t.get('company'))]:
+    for label, val in [("Наименование предмета КОНТРАКТА :", t.get('project_name')), ("Заказчик:", t.get('customer')), ("Исполнитель:", t.get('company'))]:
         p_l = doc.add_paragraph(); p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_l.add_run(label).bold = True
         p_v = doc.add_paragraph(); p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_v.add_run(str(val)).italic = True
-
     for _ in range(5): doc.add_paragraph()
     tab = doc.add_table(rows=1, cols=2)
     tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{t.get('customer_fio')}\n\n___________"
     tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{t.get('director')}\n\n___________"
+    doc.add_page_break()
+
+    # --- БЛОК 2: ОТЧЕТ (РУКОПИСНЫЙ ТЕКСТ) ---
+    # Единый заголовок по центру
+    head = doc.add_paragraph()
+    head.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    head.add_run("ОТЧЕТ О ВЫПОЛНЕНИИ ТЕХНИЧЕСКОГО ЗАДАНИЯ").bold = True
+    
+    # Очищаем и вставляем основной текст
+    cleaned_body = clean_markdown(report_body)
+    doc.add_paragraph(cleaned_body)
 
     doc.add_page_break()
-    # БЛОК 2: ОТЧЕТ
-    doc.add_heading('ОТЧЕТ О ВЫПОЛНЕНИИ ТЕХНИЧЕСКОГО ЗАДАНИЯ', level=1)
-    doc.add_paragraph(tz_processed)
 
-    doc.add_page_break()
-    # БЛОК 3: ТРЕБОВАНИЯ
+    # --- БЛОК 3: ТРЕБОВАНИЯ ---
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
-    doc.add_paragraph(req_data)
+    doc.add_paragraph(clean_markdown(req_body))
 
     return doc
 
 # --- 3. ИНТЕРФЕЙС ---
 
-st.set_page_config(page_title="Генератор Отчетов (Двухфайловый)")
+st.set_page_config(page_title="Генератор Отчетов 3.0", layout="wide")
 
-# Проверка пароля
+# (Блок пароля остается прежним)
 if "auth" not in st.session_state: st.session_state.auth = False
 if not st.session_state.auth:
     if st.text_input("Пароль", type="password") == st.secrets["APP_PASSWORD"]:
@@ -79,61 +87,59 @@ if not st.session_state.auth:
         st.rerun()
     st.stop()
 
-st.header("Шаг 1: Реквизиты из Контракта")
-contract_file = st.file_uploader("Загрузите файл КОНТРАКТА (для титульника)", type="docx", key="contract")
+col1, col2 = st.columns(2)
 
-if contract_file:
-    if st.button("Извлечь данные титульника"):
+with col1:
+    st.subheader("1. Файл Контракта")
+    file_contract = st.file_uploader("Загрузите контракт для реквизитов", type="docx")
+    if file_contract and st.button("Собрать реквизиты"):
         client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
-        raw_text = read_docx(contract_file)
-        # Ограничиваем ИИ только краями документа
-        context = raw_text[:3000] + "\n" + raw_text[-3000:]
-        
+        text = get_text_from_file(file_contract)
+        context = text[:3000] + "\n" + text[-3000:]
         res = client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": f"Верни JSON: contract_no, contract_date, ikz, project_name, customer, customer_fio, company, director. Текст: {context}"}],
             response_format={'type': 'json_object'}
         )
         st.session_state.title_info = json.loads(res.choices[0].message.content)
-        st.success("Данные титульника сохранены!")
+        st.success("Титульник зафиксирован")
 
-st.divider()
-
-st.header("Шаг 2: Работа с ТЗ")
-tz_file = st.file_uploader("Загрузите файл ТЕХЗАДАНИЯ (для отчета)", type="docx", key="tz")
-
-if tz_file and "title_info" in st.session_state:
-    if st.button("Преобразовать ТЗ и создать отчет"):
-        with st.spinner("Обработка ТЗ в прошедшее время..."):
+with col2:
+    st.subheader("2. Файл ТЗ")
+    file_tz = st.file_uploader("Загрузите только файл ТЗ", type="docx")
+    if file_tz and "title_info" in st.session_state:
+        if st.button("Сформировать рукописный отчет"):
             client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
-            tz_raw_text = read_docx(tz_file)
+            tz_text = get_text_from_file(file_tz)
             
-            # 1. Преобразование в прошедшее время
-            res_tz = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[
-                    {"role": "system", "content": "Ты — технический редактор. Твоя задача: взять текст ТЗ и переписать его в отчет ПОЛНОСТЬЮ. ГЛАВНОЕ: поменяй все глаголы на прошедшее время (сделано, оказано, выполнено, поставлено). Не сокращай текст, сохрани все детали и пункты."},
-                    {"role": "user", "content": f"ПЕРЕПИШИ В ПРОШЕДШЕМ ВРЕМЕНИ:\n\n{tz_raw_text}"}
-                ]
-            )
-            
-            # 2. Поиск требований к документам
-            res_req = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content": f"Найди в этом ТЗ все требования к фотоотчетам, количеству фото и закрывающим документам. Выпиши списком: {tz_raw_text}"}]
-            )
-            
-            # Сборка финального файла
-            final_docx = create_final_report(
-                st.session_state.title_info, 
-                res_tz.choices[0].message.content, 
-                res_req.choices[0].message.content
-            )
-            
-            buf = io.BytesIO()
-            final_docx.save(buf)
-            st.session_state.final_file = buf.getvalue()
-            st.success("Отчет успешно сформирован!")
+            with st.spinner("Пишу отчет..."):
+                # Промпт для "рукописного" стиля с главами
+                res_body = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": """Ты профессиональный технический писатель. 
+                        Сформируй отчет по следующим правилам:
+                        1. Никаких таблиц.
+                        2. Каждая услуга из ТЗ — это новая глава с нумерацией (1., 2. и т.д.).
+                        3. ЗАГОЛОВОК ГЛАВЫ пиши в НАСТОЯЩЕМ времени жирным шрифтом.
+                        4. ОПИСАНИЕ внутри главы пиши в ПРОШЕДШЕМ времени (выполнено, организовано, предоставлено).
+                        5. Убирай любые символы разметки типа **, #, |. 
+                        6. Текст должен быть связным, как будто написан человеком."""},
+                        {"role": "user", "content": f"Сделай отчет из этого ТЗ:\n\n{tz_text}"}
+                    ]
+                )
+                
+                res_req = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": f"Выпиши списком требования к фото и документам из этого ТЗ: {tz_text}"}]
+                )
+                
+                final_docx = create_final_report(st.session_state.title_info, res_body.choices[0].message.content, res_req.choices[0].message.content)
+                buf = io.BytesIO()
+                final_docx.save(buf)
+                st.session_state.ready_file = buf.getvalue()
+                st.success("Отчет в новом стиле готов!")
 
-if "final_file" in st.session_state:
-    st.download_button("📥 Скачать готовый отчет", st.session_state.final_file, "Final_Report_Full.docx")
+if "ready_file" in st.session_state:
+    st.divider()
+    st.download_button("📥 Скачать готовый отчет", st.session_state.ready_file, "Handwritten_Report.docx")
