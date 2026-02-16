@@ -196,7 +196,8 @@ if uploaded_file is not None:
                         
                         Текст для анализа (начало + конец документа):
                         {context}
-                                        
+                        """
+                        
                     }],
                     response_format={"type": "json_object"},
                     temperature=0.15,
@@ -247,4 +248,5 @@ if uploaded_file is not None:
 
 st.markdown("---")
 st.caption("После проверки титульника скажите, что получилось — перейдём к шагу 2 (ТЗ и основной отчёт)")
+
 
