@@ -17,6 +17,13 @@ def clean_markdown(text):
     text = text.replace('|', '')
     return text.strip()
 
+def format_fio_short(fio_str):
+    if not fio_str: return "___________"
+    parts = fio_str.split()
+    if len(parts) >= 3:
+        return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
+    return fio_str
+
 def get_text_from_file(file):
     doc = Document(file)
     content = []
@@ -42,16 +49,11 @@ def get_contract_start_text(file):
 
 # --- 2. СБОРКА ДОКУМЕНТА (РУКОПИСНЫЙ СТИЛЬ) ---
 
-def create_final_report(title_data, report_body, req_body):
+def build_title_page(t):
     doc = Document()
-    t = title_data
-    
-    # Настройка стиля (Times New Roman)
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
-
-    # --- БЛОК 1: ТИТУЛЬНИК (БЕЗ ИЗМЕНЕНИЙ) ---
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.add_run(f"Информационно-аналитический отчет об исполнении условий\n").bold = True
@@ -66,37 +68,26 @@ def create_final_report(title_data, report_body, req_body):
         p_v.add_run(str(val)).italic = True
     for _ in range(5): doc.add_paragraph()
     tab = doc.add_table(rows=2, cols=2)
-    tab.autofit = True
-    
-    # ПЕРВАЯ СТРОКА: Должность, Линия и ФИО
-    # Ячейка Заказчика
-    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{t.get('customer_post', '___________')}\n\n___________ / {format_fio_short(t.get('customer_fio'))}"
-    # Ячейка Исполнителя
-    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{t.get('director_post', '___________')}\n\n___________ / {format_fio_short(t.get('director'))}"
-    
-    # ВТОРАЯ СТРОКА: Специально для М.П. (строго под подписями)
-    tab.rows[1].cells[0].text = "м.п."
-    tab.rows[1].cells[1].text = "м.п."
-    doc.add_page_break()
+    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{t.get('customer_post', 'Должность')}\n\n___________ / {format_fio_short(t.get('customer_fio'))}"
+    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{t.get('director_post', 'Должность')}\n\n___________ / {format_fio_short(t.get('director'))}"
+    tab.rows[1].cells[0].text = "м.п."; tab.rows[1].cells[1].text = "м.п."
+    return doc
 
-    # --- БЛОК 2: ОТЧЕТ (РУКОПИСНЫЙ ТЕКСТ) ---
-    # Единый заголовок по центру
+def build_report_body(report_text, req_text):
+    doc = Document()
+    style = doc.styles['Normal']
+    style.font.name = 'Times New Roman'
+    style.font.size = Pt(12)
     head = doc.add_paragraph()
     head.alignment = WD_ALIGN_PARAGRAPH.CENTER
     head.add_run("ОТЧЕТ О ВЫПОЛНЕНИИ ТЕХНИЧЕСКОГО ЗАДАНИЯ").bold = True
-    
-    # Очищаем и вставляем основной текст
-    cleaned_body = clean_markdown(report_body)
-    doc.add_paragraph(cleaned_body)
-
+    for line in clean_markdown(report_text).split('\n'):
+        doc.add_paragraph(line).alignment = WD_ALIGN_PARAGRAPH.BOTH
     doc.add_page_break()
-
-    # --- БЛОК 3: ТРЕБОВАНИЯ ---
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
-    doc.add_paragraph(clean_markdown(req_body))
-
+    doc.add_paragraph(clean_markdown(req_text))
     return doc
-
+    
 # --- 3. ИНТЕРФЕЙС ---
 
 st.set_page_config(page_title="Генератор Отчетов 3.0", layout="wide")
@@ -204,4 +195,5 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
