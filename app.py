@@ -1,7 +1,7 @@
 import streamlit as st
 from docx import Document
 from docx.shared import Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_PARAGRAPH_ALIGNMENT
 from openai import OpenAI
 import io
 import json
@@ -69,8 +69,11 @@ def build_title_page(t):
     for _ in range(5): doc.add_paragraph()
     tab = doc.add_table(rows=2, cols=2)
     
+    # Делаем первую букву заглавной
     cust_post = str(t.get('customer_post', 'Должность')).capitalize()
     exec_post = str(t.get('director_post', 'Должность')).capitalize()
+    
+    # Вставляем именно переменные cust_post и exec_post
     tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{cust_post}\n\n___________ / {format_fio_short(t.get('customer_fio'))}"
     tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{exec_post}\n\n___________ / {format_fio_short(t.get('director'))}"
     
@@ -78,39 +81,32 @@ def build_title_page(t):
     tab.rows[1].cells[1].text = "м.п."
     return doc
 
-def build_report_body(report_text, req_text, t):
-    doc = Document()
-    style = doc.styles['Normal']
-    style.font.name = 'Times New Roman'
-    style.font.size = Pt(12)
+def create_final_report(t, report_body, req_body):
+    doc = build_title_page(t) # Используем уже готовую логику титульника
+    doc.add_page_break()
     
-    # Динамический заголовок по центру (вместо старого статичного)
+    # Добавляем тело отчета (копируем логику из build_report_body)
     project_name = str(t.get('project_name', 'оказанию услуг')).strip()
     head = doc.add_paragraph()
-    head.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    head.alignment = 1 # По центру
     head.add_run(f"Отчет об оказании услуг по {project_name}").bold = True
     
-    doc.add_paragraph() # Пустая строка после заголовка
-
-    # Обработка текста: Главы — жирным, Описание — обычным
-    lines = clean_markdown(report_text).split('\n')
+    doc.add_paragraph()
+    
+    lines = clean_markdown(report_body).split('\n')
     for line in lines:
         line = line.strip()
         if not line: continue
-        
         para = doc.add_paragraph()
-        # Если строка начинается с цифры (1. или 10.), делаем её жирной
         if re.match(r"^\d+\.", line):
             para.add_run(line).bold = True
         else:
             para.add_run(line)
-        para.alignment = WD_ALIGN_PARAGRAPH.BOTH
-    
-    # Блок требований
+        para.alignment = 3 # По ширине
+        
     doc.add_page_break()
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
-    doc.add_paragraph(clean_markdown(req_text))
-    
+    doc.add_paragraph(clean_markdown(req_body))
     return doc
     
 # --- 3. ИНТЕРФЕЙС ---
@@ -235,6 +231,7 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
 
 
