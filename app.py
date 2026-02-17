@@ -78,19 +78,39 @@ def build_title_page(t):
     tab.rows[1].cells[1].text = "м.п."
     return doc
 
-def build_report_body(report_text, req_text):
+def build_report_body(report_text, req_text, t):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
+    
+    # Динамический заголовок по центру (вместо старого статичного)
+    project_name = str(t.get('project_name', 'оказанию услуг')).strip()
     head = doc.add_paragraph()
     head.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    head.add_run("ОТЧЕТ О ВЫПОЛНЕНИИ ТЕХНИЧЕСКОГО ЗАДАНИЯ").bold = True
-    for line in clean_markdown(report_text).split('\n'):
-        doc.add_paragraph(line).alignment = WD_ALIGN_PARAGRAPH.BOTH
+    head.add_run(f"Отчет об оказании услуг по {project_name}").bold = True
+    
+    doc.add_paragraph() # Пустая строка после заголовка
+
+    # Обработка текста: Главы — жирным, Описание — обычным
+    lines = clean_markdown(report_text).split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+        
+        para = doc.add_paragraph()
+        # Если строка начинается с цифры (1. или 10.), делаем её жирной
+        if re.match(r"^\d+\.", line):
+            para.add_run(line).bold = True
+        else:
+            para.add_run(line)
+        para.alignment = WD_ALIGN_PARAGRAPH.BOTH
+    
+    # Блок требований
     doc.add_page_break()
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
     doc.add_paragraph(clean_markdown(req_text))
+    
     return doc
     
 # --- 3. ИНТЕРФЕЙС ---
@@ -153,29 +173,44 @@ with col2:
             raw_tz = get_text_from_file(file_tz)
             
             with st.spinner("ИИ анализирует ТЗ и пишет текст..."):
-                res_body = client.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[{"role": "system", "content": "Ты техписатель. Сделай отчет: Главы (1., 2.) в Настоящем времени жирным, Описание внутри в Прошедшем. Без таблиц и символов разметки."},
-                              {"role": "user", "content": f"Текст ТЗ:\n{raw_tz}"}]
-                )
-                res_req = client.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"Найди требования к фото и документам в этом ТЗ: {raw_tz}"}]
-                )
-                
-                # Сохраняем сырые тексты для финальной сборки
-                st.session_state.raw_report_body = res_body.choices[0].message.content
-                st.session_state.raw_requirements = res_req.choices[0].message.content
-                
-                # Собираем только тело отчета
-                doc_rep = build_report_body(st.session_state.raw_report_body, st.session_state.raw_requirements)
-                buf_r = io.BytesIO()
-                doc_rep.save(buf_r)
-                st.session_state.file_report_only = buf_r.getvalue()
-                st.success("Отчет сформирован!")
+            # 1. Запрос к ИИ для формирования текста глав
+            res_body = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": """Ты техписатель. Сформируй отчет по правилам:
+                    1. Каждая глава начинается с номера и названия (например, 1. Организация мероприятия).
+                    2. ЗАГОЛОВОК ГЛАВЫ пиши в НАСТОЯЩЕМ времени.
+                    3. ОПИСАНИЕ внутри главы пиши в ПРОШЕДШЕМ времени (выполнено, оказано, организовано).
+                    4. ВАЖНО: Не используй символы разметки (** или #). Весь текст должен быть чистым."""},
+                    {"role": "user", "content": f"Сделай отчет из этого ТЗ:\n\n{raw_tz}"}
+                ]
+            )
+            
+            # 2. Запрос к ИИ для поиска требований
+            res_req = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": f"Найди требования к фото и документам в этом ТЗ: {raw_tz}"}]
+            )
+            
+            # Сохраняем результаты в сессию
+            st.session_state.raw_report_body = res_body.choices[0].message.content
+            st.session_state.raw_requirements = res_req.choices[0].message.content
+            
+            # 3. Сборка документа (передаем t_info для заголовка)
+            # Убедись, что в build_report_body теперь заложен логика жирных глав
+            doc_rep = build_report_body(
+                st.session_state.raw_report_body, 
+                st.session_state.raw_requirements,
+                st.session_state.t_info if "t_info" in st.session_state else {}
+            )
+            
+            buf_r = io.BytesIO()
+            doc_rep.save(buf_r)
+            st.session_state.file_report_only = buf_r.getvalue()
+            st.success("Отчет сформирован!")
 
-        if "file_report_only" in st.session_state:
-            st.download_button("📥 Скачать Отчет (без титульника)", st.session_state.file_report_only, "Report_Only.docx")
+    if "file_report_only" in st.session_state:
+        st.download_button("📥 Скачать Отчет (без титульника)", st.session_state.file_report_only, "Report_Only.docx")
 
 # --- КНОПКА ПОЛНОЙ СБОРКИ ---
 if "file_title_only" in st.session_state and "file_report_only" in st.session_state:
@@ -200,6 +235,7 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
 
 
