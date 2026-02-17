@@ -68,11 +68,14 @@ def build_title_page(t):
         p_v.add_run(str(val)).italic = True
     for _ in range(5): doc.add_paragraph()
     tab = doc.add_table(rows=2, cols=2)
+    
     cust_post = str(t.get('customer_post', 'Должность')).capitalize()
     exec_post = str(t.get('director_post', 'Должность')).capitalize()
-    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{t.get('customer_post', 'Должность')}\n\n___________ / {format_fio_short(t.get('customer_fio'))}"
-    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{t.get('director_post', 'Должность')}\n\n___________ / {format_fio_short(t.get('director'))}"
-    tab.rows[1].cells[0].text = "м.п."; tab.rows[1].cells[1].text = "м.п."
+    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{cust_post}\n\n___________ / {format_fio_short(t.get('customer_fio'))}"
+    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{exec_post}\n\n___________ / {format_fio_short(t.get('director'))}"
+    
+    tab.rows[1].cells[0].text = "м.п."
+    tab.rows[1].cells[1].text = "м.п."
     return doc
 
 def build_report_body(report_text, req_text):
@@ -197,6 +200,7 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
 
 
