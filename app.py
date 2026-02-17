@@ -27,6 +27,19 @@ def get_text_from_file(file):
             content.append(" ".join(cell.text.strip() for cell in row.cells))
     return "\n".join(content)
 
+def get_contract_start_text(file):
+    """Считывает текст только до начала 2-го раздела (Предмет контракта)"""
+    doc = Document(file)
+    start_text = []
+    for p in doc.paragraphs:
+        txt = p.text.strip()
+        if txt:
+            start_text.append(txt)
+            # Если строка начинается с "2." (например, 2. ЦЕНА КОНТРАКТА), стоп.
+            if re.match(r"^2\.", txt): 
+                break
+    return "\n".join(start_text)
+
 # --- 2. СБОРКА ДОКУМЕНТА (РУКОПИСНЫЙ СТИЛЬ) ---
 
 def create_final_report(title_data, report_body, req_body):
@@ -98,7 +111,18 @@ with col1:
         context = text[:3000] + "\n" + text[-3000:]
         res = client.chat.completions.create(
             model="deepseek-chat",
-            messages=[{"role": "user", "content": f"Верни JSON: contract_no, contract_date, ikz, project_name, customer, customer_fio, company, director. Текст: {context}"}],
+            messages=[{"role": "user", "content": f"""Верни JSON на основе ПЕРВОЙ страницы контракта (до пункта 2):
+            - contract_no: строго номер из шапки 
+            - contract_date: дата из шапки 
+            - ikz: ИКЗ полностью (если нет в шапке, пиши null)
+            - project_name: полное описание из пункта 1.1 "Предмет контракта"
+            - customer: полное официальное название Заказчика (Министерство...)
+            - customer_post: полная должность подписанта Заказчика (Министр)
+            - customer_fio: ФИО подписанта Заказчика в формате Фамилия И.О.
+            - company: полное название Исполнителя (ООО...)
+            - director_post: полная должность подписанта Исполнителя (Генеральный директор)
+            - director: ФИО подписанта Исполнителя в формате Фамилия И.О.
+            Текст: {context}"""}],
             response_format={'type': 'json_object'}
         )
         st.session_state.title_info = json.loads(res.choices[0].message.content)
@@ -143,3 +167,4 @@ with col2:
 if "ready_file" in st.session_state:
     st.divider()
     st.download_button("📥 Скачать готовый отчет", st.session_state.ready_file, "Handwritten_Report.docx")
+
