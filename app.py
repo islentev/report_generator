@@ -65,9 +65,18 @@ def create_final_report(title_data, report_body, req_body):
         p_v = doc.add_paragraph(); p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_v.add_run(str(val)).italic = True
     for _ in range(5): doc.add_paragraph()
-    tab = doc.add_table(rows=1, cols=2)
-    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{t.get('customer_fio')}\n\n___________"
-    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{t.get('director')}\n\n___________"
+    tab = doc.add_table(rows=2, cols=2)
+    tab.autofit = True
+    
+    # ПЕРВАЯ СТРОКА: Должность, Линия и ФИО
+    # Ячейка Заказчика
+    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{t.get('customer_post', '___________')}\n\n___________ / {format_fio_short(t.get('customer_fio'))}"
+    # Ячейка Исполнителя
+    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{t.get('director_post', '___________')}\n\n___________ / {format_fio_short(t.get('director'))}"
+    
+    # ВТОРАЯ СТРОКА: Специально для М.П. (строго под подписями)
+    tab.rows[1].cells[0].text = "м.п."
+    tab.rows[1].cells[1].text = "м.п."
     doc.add_page_break()
 
     # --- БЛОК 2: ОТЧЕТ (РУКОПИСНЫЙ ТЕКСТ) ---
@@ -167,4 +176,5 @@ with col2:
 if "ready_file" in st.session_state:
     st.divider()
     st.download_button("📥 Скачать готовый отчет", st.session_state.ready_file, "Handwritten_Report.docx")
+
 
