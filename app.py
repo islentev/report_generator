@@ -173,44 +173,44 @@ with col2:
             raw_tz = get_text_from_file(file_tz)
             
             with st.spinner("ИИ анализирует ТЗ и пишет текст..."):
-            # 1. Запрос к ИИ для формирования текста глав
-            res_body = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[
-                    {"role": "system", "content": """Ты техписатель. Сформируй отчет по правилам:
-                    1. Каждая глава начинается с номера и названия (например, 1. Организация мероприятия).
-                    2. ЗАГОЛОВОК ГЛАВЫ пиши в НАСТОЯЩЕМ времени.
-                    3. ОПИСАНИЕ внутри главы пиши в ПРОШЕДШЕМ времени (выполнено, оказано, организовано).
-                    4. ВАЖНО: Не используй символы разметки (** или #). Весь текст должен быть чистым."""},
-                    {"role": "user", "content": f"Сделай отчет из этого ТЗ:\n\n{raw_tz}"}
-                ]
-            )
-            
-            # 2. Запрос к ИИ для поиска требований
-            res_req = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content": f"Найди требования к фото и документам в этом ТЗ: {raw_tz}"}]
-            )
-            
-            # Сохраняем результаты в сессию
-            st.session_state.raw_report_body = res_body.choices[0].message.content
-            st.session_state.raw_requirements = res_req.choices[0].message.content
-            
-            # 3. Сборка документа (передаем t_info для заголовка)
-            # Убедись, что в build_report_body теперь заложен логика жирных глав
-            doc_rep = build_report_body(
-                st.session_state.raw_report_body, 
-                st.session_state.raw_requirements,
-                st.session_state.t_info if "t_info" in st.session_state else {}
-            )
-            
-            buf_r = io.BytesIO()
-            doc_rep.save(buf_r)
-            st.session_state.file_report_only = buf_r.getvalue()
-            st.success("Отчет сформирован!")
-
-    if "file_report_only" in st.session_state:
-        st.download_button("📥 Скачать Отчет (без титульника)", st.session_state.file_report_only, "Report_Only.docx")
+                # 1. Запрос к ИИ для формирования текста глав
+                res_body = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": """Ты техписатель. Сформируй отчет по правилам:
+                        1. Каждая глава начинается с номера и названия (например, 1. Организация мероприятия).
+                        2. ЗАГОЛОВОК ГЛАВЫ пиши в НАСТОЯЩЕМ времени.
+                        3. ОПИСАНИЕ внутри главы пиши в ПРОШЕДШЕМ времени (выполнено, оказано, организовано).
+                        4. ВАЖНО: Не используй символы разметки (** или #). Весь текст должен быть чистым."""},
+                        {"role": "user", "content": f"Сделай отчет из этого ТЗ:\n\n{raw_tz}"}
+                    ]
+                )
+                
+                # 2. Запрос к ИИ для поиска требований
+                res_req = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": f"Найди требования к фото и документам в этом ТЗ: {raw_tz}"}]
+                )
+                
+                # Сохраняем результаты в сессию
+                st.session_state.raw_report_body = res_body.choices[0].message.content
+                st.session_state.raw_requirements = res_req.choices[0].message.content
+                
+                # 3. Сборка документа (передаем t_info для заголовка)
+                # Убедись, что в build_report_body теперь заложен логика жирных глав
+                doc_rep = build_report_body(
+                    st.session_state.raw_report_body, 
+                    st.session_state.raw_requirements,
+                    st.session_state.t_info if "t_info" in st.session_state else {}
+                )
+                
+                buf_r = io.BytesIO()
+                doc_rep.save(buf_r)
+                st.session_state.file_report_only = buf_r.getvalue()
+                st.success("Отчет сформирован!")
+    
+        if "file_report_only" in st.session_state:
+            st.download_button("📥 Скачать Отчет (без титульника)", st.session_state.file_report_only, "Report_Only.docx")
 
 # --- КНОПКА ПОЛНОЙ СБОРКИ ---
 if "file_title_only" in st.session_state and "file_report_only" in st.session_state:
@@ -235,6 +235,7 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
 
 
