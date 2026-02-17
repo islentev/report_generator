@@ -101,80 +101,107 @@ def create_final_report(title_data, report_body, req_body):
 
 st.set_page_config(page_title="Генератор Отчетов 3.0", layout="wide")
 
-# (Блок пароля остается прежним)
-if "auth" not in st.session_state: st.session_state.auth = False
-if not st.session_state.auth:
-    if st.text_input("Пароль", type="password") == st.secrets["APP_PASSWORD"]:
+# --- ПАРОЛЬ В БОКОВОЙ ПАНЕЛИ ---
+with st.sidebar:
+    st.title("Авторизация")
+    if "auth" not in st.session_state: 
+        st.session_state.auth = False
+    
+    pwd = st.text_input("Введите пароль", type="password")
+    if pwd == st.secrets["APP_PASSWORD"]:
         st.session_state.auth = True
-        st.rerun()
-    st.stop()
-
+    
+    if not st.session_state.auth:
+        st.warning("Доступ ограничен. Введите пароль в поле выше.")
+        st.stop()
+    st.success("Доступ разрешен")
+    
 col1, col2 = st.columns(2)
 
+# СТОЛБЕЦ 1: ТИТУЛЬНЫЙ ЛИСТ
 with col1:
-    st.subheader("1. Файл Контракта")
-    file_contract = st.file_uploader("Загрузите контракт для реквизитов", type="docx")
-    if file_contract and st.button("Собрать реквизиты"):
-        client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
-        text = get_text_from_file(file_contract)
-        context = text[:3000] + "\n" + text[-3000:]
-        res = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[{"role": "user", "content": f"""Верни JSON на основе ПЕРВОЙ страницы контракта (до пункта 2):
-            - contract_no: строго номер из шапки 
-            - contract_date: дата из шапки 
-            - ikz: ИКЗ полностью (если нет в шапке, пиши null)
-            - project_name: полное описание из пункта 1.1 "Предмет контракта"
-            - customer: полное официальное название Заказчика (Министерство...)
-            - customer_post: полная должность подписанта Заказчика (Министр)
-            - customer_fio: ФИО подписанта Заказчика в формате Фамилия И.О.
-            - company: полное название Исполнителя (ООО...)
-            - director_post: полная должность подписанта Исполнителя (Генеральный директор)
-            - director: ФИО подписанта Исполнителя в формате Фамилия И.О.
-            Текст: {context}"""}],
-            response_format={'type': 'json_object'}
-        )
-        st.session_state.title_info = json.loads(res.choices[0].message.content)
-        st.success("Титульник зафиксирован")
-
-with col2:
-    st.subheader("2. Файл ТЗ")
-    file_tz = st.file_uploader("Загрузите только файл ТЗ", type="docx")
-    if file_tz and "title_info" in st.session_state:
-        if st.button("Сформировать рукописный отчет"):
+    st.header("📄 1. Титульный лист")
+    file_contract = st.file_uploader("Загрузите Контракт", type="docx", key="contract_loader")
+    
+    if file_contract:
+        if st.button("Сформировать Титульный лист"):
             client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
-            tz_text = get_text_from_file(file_tz)
+            # Читаем только начало контракта
+            context = get_contract_start_text(file_contract)
             
-            with st.spinner("Пишу отчет..."):
-                # Промпт для "рукописного" стиля с главами
+            res = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": f"Верни JSON по первой странице (до п.2): contract_no, contract_date, ikz, project_name, customer, customer_post, customer_fio, company, director_post, director. Текст: {context}"}],
+                response_format={'type': 'json_object'}
+            )
+            st.session_state.t_info = json.loads(res.choices[0].message.content)
+            
+            # Собираем только титульник
+            doc_title = build_title_page(st.session_state.t_info)
+            buf_t = io.BytesIO()
+            doc_title.save(buf_t)
+            st.session_state.file_title_only = buf_t.getvalue()
+            st.success("Титульный лист готов!")
+
+        if "file_title_only" in st.session_state:
+            st.download_button("📥 Скачать Титульник", st.session_state.file_title_only, "Title_Page.docx")
+
+# СТОЛБЕЦ 2: РУКОПИСНЫЙ ОТЧЕТ
+with col2:
+    st.header("📝 2. Отчет по ТЗ")
+    file_tz = st.file_uploader("Загрузите Техзадание", type="docx", key="tz_loader")
+    
+    if file_tz:
+        if st.button("Сформировать Рукописный отчет"):
+            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
+            raw_tz = get_text_from_file(file_tz)
+            
+            with st.spinner("ИИ анализирует ТЗ и пишет текст..."):
                 res_body = client.chat.completions.create(
                     model="deepseek-chat",
-                    messages=[
-                        {"role": "system", "content": """Ты профессиональный технический писатель. 
-                        Сформируй отчет по следующим правилам:
-                        1. Никаких таблиц.
-                        2. Каждая услуга из ТЗ — это новая глава с нумерацией (1., 2. и т.д.).
-                        3. ЗАГОЛОВОК ГЛАВЫ пиши в НАСТОЯЩЕМ времени жирным шрифтом.
-                        4. ОПИСАНИЕ внутри главы пиши в ПРОШЕДШЕМ времени (выполнено, организовано, предоставлено).
-                        5. Убирай любые символы разметки типа **, #, |. 
-                        6. Текст должен быть связным, как будто написан человеком."""},
-                        {"role": "user", "content": f"Сделай отчет из этого ТЗ:\n\n{tz_text}"}
-                    ]
+                    messages=[{"role": "system", "content": "Ты техписатель. Сделай отчет: Главы (1., 2.) в Настоящем времени жирным, Описание внутри в Прошедшем. Без таблиц и символов разметки."},
+                              {"role": "user", "content": f"Текст ТЗ:\n{raw_tz}"}]
                 )
-                
                 res_req = client.chat.completions.create(
                     model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"Выпиши списком требования к фото и документам из этого ТЗ: {tz_text}"}]
+                    messages=[{"role": "user", "content": f"Найди требования к фото и документам в этом ТЗ: {raw_tz}"}]
                 )
                 
-                final_docx = create_final_report(st.session_state.title_info, res_body.choices[0].message.content, res_req.choices[0].message.content)
-                buf = io.BytesIO()
-                final_docx.save(buf)
-                st.session_state.ready_file = buf.getvalue()
-                st.success("Отчет в новом стиле готов!")
+                # Сохраняем сырые тексты для финальной сборки
+                st.session_state.raw_report_body = res_body.choices[0].message.content
+                st.session_state.raw_requirements = res_req.choices[0].message.content
+                
+                # Собираем только тело отчета
+                doc_rep = build_report_body(st.session_state.raw_report_body, st.session_state.raw_requirements)
+                buf_r = io.BytesIO()
+                doc_rep.save(buf_r)
+                st.session_state.file_report_only = buf_r.getvalue()
+                st.success("Отчет сформирован!")
 
-if "ready_file" in st.session_state:
+        if "file_report_only" in st.session_state:
+            st.download_button("📥 Скачать Отчет (без титульника)", st.session_state.file_report_only, "Report_Only.docx")
+
+# --- КНОПКА ПОЛНОЙ СБОРКИ ---
+if "file_title_only" in st.session_state and "file_report_only" in st.session_state:
     st.divider()
-    st.download_button("📥 Скачать готовый отчет", st.session_state.ready_file, "Handwritten_Report.docx")
+    st.subheader("🏁 Финальный шаг")
+    if st.button("🚀 СОБРАТЬ ПОЛНЫЙ ОТЧЕТ", use_container_width=True):
+        # Используем функцию из Кода 2.0 для сборки всего документа
+        full_doc = create_final_report(
+            st.session_state.t_info, 
+            st.session_state.raw_report_body, 
+            st.session_state.raw_requirements
+        )
+        final_buf = io.BytesIO()
+        full_doc.save(final_buf)
+        st.session_state.full_ready_file = final_buf.getvalue()
 
+    if "full_ready_file" in st.session_state:
+        st.download_button(
+            label="🔥 СКАЧАТЬ ВЕСЬ ДОКУМЕНТ (ТИТУЛЬНИК + ОТЧЕТ)",
+            data=st.session_state.full_ready_file,
+            file_name="Full_Final_Report.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
 
