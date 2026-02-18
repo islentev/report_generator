@@ -186,12 +186,29 @@ col1, col2 = st.columns(2)
 # СТОЛБЕЦ 1: ТИТУЛЬНЫЙ ЛИСТ
 with col1:
     st.header("📄 1. Титульный лист")
-    file_contract = st.file_uploader(
-    "Загрузите Контракт", 
-    type="docx", 
-    key="contract_loader", 
-    on_change=lambda: st.session_state.pop("t_info", None) # Удаляет данные старого контракта
-    )
+    
+    # Создаем вкладки: Файл или Текст
+    t_tab1, t_tab2 = st.tabs(["📁 Загрузить файл", "⌨️ Вставить текст"])
+    
+    context = "" # Общая переменная для текста
+    
+    with t_tab1:
+        file_contract = st.file_uploader("Загрузите Контракт", type="docx", key="contract_loader")
+        if file_contract:
+            context = get_contract_start_text(file_contract)
+            
+    with t_tab2:
+        manual_context = st.text_area("Вставьте текст первой страницы контракта", height=200, key="manual_title")
+        if manual_context:
+            context = manual_context
+
+    # Кнопка теперь работает с переменной context (откуда бы она ни пришла)
+    if st.button("Сформировать Титульный лист"):
+        if not context:
+            st.error("Загрузите файл или вставьте текст!")
+        else:
+            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
+            # Далее ваш неизменный код вызова API...
 
     if file_contract:
         if st.button("Сформировать Титульный лист"):
@@ -247,12 +264,28 @@ with col1:
 
 with col2:
     st.header("📝 2. Отчет по ТЗ")
-    file_tz = st.file_uploader(
-    "Загрузите Техзадание", 
-    type="docx", 
-    key="tz_loader", 
-    on_change=lambda: st.session_state.pop("raw_report_body", None) # Удаляет старый текст отчета
-    )
+    
+    # Создаем вкладки: Файл или Текст
+    r_tab1, r_tab2 = st.tabs(["📁 Загрузить файл", "⌨️ Вставить текст"])
+    
+    raw_tz = "" # Общая переменная для ТЗ
+    
+    with r_tab1:
+        file_tz = st.file_uploader("Загрузите Техзадание", type="docx", key="tz_loader")
+        if file_tz:
+            raw_tz = get_text_from_file(file_tz)
+            
+    with r_tab2:
+        manual_tz = st.text_area("Вставьте текст Технического задания", height=200, key="manual_tz")
+        if manual_tz:
+            raw_tz = manual_tz
+
+    if st.button("Сформировать Рукописный отчет"):
+        if not raw_tz:
+            st.error("Загрузите файл ТЗ или вставьте текст!")
+        else:
+            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
+            # Далее ваш неизменный код вызова API с Spinner...
 
     if file_tz:
         if st.button("Сформировать Рукописный отчет"):
@@ -325,3 +358,4 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
