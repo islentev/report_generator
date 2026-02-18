@@ -175,7 +175,29 @@ with col1:
             context = get_contract_start_text(file_contract)
             res = client.chat.completions.create(
                 model="deepseek-chat",
-                messages=[{"role": "user", "content": f"Верни JSON по первой странице (до п.2): contract_no, contract_date, ikz, project_name, customer, customer_post, customer_fio, company, director_post, director. Текст: {context}"}],
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "Ты — эксперт по анализу юридических документов. Твоя задача — извлечь данные строго в формате JSON. Если номер контракта содержит символы (№, /, -), извлекай их полностью. Если дата написана прописью или цифрами, верни её как в тексте."
+                    },
+                    {
+                        "role": "user", 
+                        "content": f"""Извлеки данные из начала контракта:
+                        - contract_no: Номер контракта (ищи сразу после слова 'КОНТРАКТ №' или 'ДОГОВОР №')
+                        - contract_date: Дата контракта
+                        - ikz: Идентификационный код закупки (длинный ряд цифр)
+                        - project_name: Предмет (название) контракта
+                        - customer: Полное наименование Заказчика
+                        - customer_post: Должность подписанта Заказчика (напр. Министр)
+                        - customer_fio: ФИО подписанта Заказчика
+                        - company: Полное наименование Исполнителя
+                        - director_post: Должность подписанта Исполнителя (напр. Генеральный директор)
+                        - director: ФИО подписанта Исполнителя
+
+                        Текст для анализа:
+                        {context}"""
+                    }
+                ],
                 response_format={'type': 'json_object'}
             )
 
@@ -268,3 +290,4 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
