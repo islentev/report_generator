@@ -190,9 +190,9 @@ with col1:
                     {
                         "role": "user", 
                         "content": f"""Извлеки данные из начала контракта и сформируй JSON объект с полями:
-                        - contract_no: Номер контракта (ищи сразу после слова 'КОНТРАКТ №' или 'ДОГОВОР №')
+                        - contract_no: Номер контракта (ищи сразу слова 'КОНТРАКТ №' или 'ДОГОВОР №')
                         - contract_date: Дата контракта
-                        - ikz: Идентификационный код закупки (длинный ряд цифр)
+                        - ikz: Идентификационный код закупки (полностью включая цифры)
                         - project_name: Предмет (название) контракта
                         - customer: Полное наименование Заказчика
                         - customer_post: Должность подписанта Заказчика (напр. Министр)
@@ -302,6 +302,7 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
 
 
