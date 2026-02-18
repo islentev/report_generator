@@ -204,7 +204,7 @@ with col1:
             st.error("Нет данных для анализа! Загрузите файл или вставьте текст.")
         else:
             with st.spinner("ИИ извлекает реквизиты..."):
-                client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v3")
+                client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
                 res = client.chat.completions.create(
                     model="deepseek-chat",
                     messages=[
@@ -269,7 +269,7 @@ with col2:
             st.error("Нет текста ТЗ!")
         else:
             with st.spinner("ИИ пишет отчет..."):
-                client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
+                client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
                 
                 # Текст отчета
                 res_body = client.chat.completions.create(
@@ -336,5 +336,6 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
 
