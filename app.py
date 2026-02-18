@@ -14,16 +14,21 @@ def get_text_from_file(file):
     return text
 
 def get_contract_start_text(file):
-    """Считывает текст из таблиц и параграфов до начала 2-го раздела"""
     doc = Document(file)
-    start_text = []
+    full_text = []
     
-    # 1. Сначала вытаскиваем текст из всех таблиц (именно там ваш ИКЗ и №)
+    # Читаем таблицы (там часто № и ИКЗ)
     for table in doc.tables:
         for row in table.rows:
-            row_content = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-            if row_content:
-                start_text.append(" ".join(row_content))
+            full_text.append(" ".join(cell.text.strip() for cell in row.cells))
+    
+    # Читаем параграфы
+    for p in doc.paragraphs:
+        full_text.append(p.text.strip())
+        
+    # Склеиваем и берем первые 5000 символов (этого хватит до 3-5 страницы)
+    context = "\n".join(full_text)
+    return context[:1000]
 
     # 2. Затем добавляем обычные параграфы
     for p in doc.paragraphs:
@@ -333,6 +338,7 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
 
 
