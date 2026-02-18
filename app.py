@@ -1,293 +1,327 @@
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
-import pandas as pd
 from docx import Document
 from docx.shared import Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_PARAGRAPH_ALIGNMENT
 from openai import OpenAI
 import io
 import json
 import re
+import docx2txt
 
-def format_fio_universal(raw_fio):
-    if not raw_fio or len(raw_fio) < 5: return "________________"
-    # Убираем возможный "мусор" (должности), который ИИ может случайно прихватить в ФИО
-    clean = re.sub(r'(директор|министр|заместитель|начальник|председатель|генеральный)', '', raw_fio, flags=re.IGNORECASE).strip()
-    parts = clean.split()
-    if len(parts) >= 3: return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
-    if len(parts) == 2: return f"{parts[0]} {parts[1][0]}."
-    return clean
+def get_text_from_file(file):
+    # Извлекает абсолютно весь текст, включая тот, что в таблицах
+    text = docx2txt.process(file)
+    return text
 
-# --- 1. НАСТРОЙКА ---
-st.set_page_config(page_title="Юридический Генератор", layout="wide")
+def get_contract_start_text(file):
+    doc = Document(file)
+    full_text = []
+    
+    # Читаем таблицы (там часто № и ИКЗ)
+    for table in doc.tables:
+        for row in table.rows:
+            full_text.append(" ".join(cell.text.strip() for cell in row.cells))
+    
+    # Читаем параграфы
+    for p in doc.paragraphs:
+        full_text.append(p.text.strip())
+        
+    # Склеиваем и берем первые 5000 символов (этого хватит до 3-5 страницы)
+    context = "\n".join(full_text)
+    return context[:1000]
 
-if 'report_buffer' not in st.session_state: st.session_state['report_buffer'] = None
-if 'title_info' not in st.session_state: st.session_state['title_info'] = None
+    # 2. Затем добавляем обычные параграфы
+    for p in doc.paragraphs:
+        txt = p.text.strip()
+        if txt:
+            # Проверка на начало 2-го раздела (чтобы не кормить ИИ лишним)
+            if re.match(r"^2\.", txt): 
+                break
+            start_text.append(txt)
+            
+    return "\n".join(start_text)
 
-# --- 2. ПОДКЛЮЧЕНИЕ ---
-try:
-    client_ai = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"].strip().strip('"'), base_url="https://api.deepseek.com/v1")
-    gc = gspread.authorize(Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']))
-    SHEET_ID = st.secrets["SHEET_ID"]
-    APP_PASSWORD = st.secrets["APP_PASSWORD"]
-except Exception as e:
-    st.error(f"Ошибка конфига: {e}"); st.stop()
+# --- 1. ОЧИСТКА ТЕКСТА ОТ СИМВОЛОВ ---
+def clean_markdown(text):
+    """Удаляет символы разметки типа ** или #"""
+    text = text.replace('**', '')
+    text = text.replace('###', '')
+    text = text.replace('##', '')
+    text = text.replace('|', '')
+    return text.strip()
 
-# --- 3. ФУНКЦИЯ СОЗДАНИЯ DOCX ---
-def create_report_docx(report_content, title_data, requirements_list):
+def format_fio_short(fio_str):
+    if not fio_str: return "___________"
+    parts = fio_str.split()
+    if len(parts) >= 3:
+        return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
+    return fio_str
+
+def get_text_from_file(file):
+    doc = Document(file)
+    content = []
+    for p in doc.paragraphs:
+        if p.text.strip(): content.append(p.text)
+    for table in doc.tables:
+        for row in table.rows:
+            content.append(" ".join(cell.text.strip() for cell in row.cells))
+    return "\n".join(content)
+
+# --- 2. СБОРКА ДОКУМЕНТА (РУКОПИСНЫЙ СТИЛЬ) ---
+
+def build_title_page(t):
     doc = Document()
-    
-    def format_name(full_name):
-        if not full_name: return ""
-        parts = full_name.split()
-        if len(parts) >= 3:
-            return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
-        return full_name
-
-    # Подготовка данных
-    contract_no = title_data.get('contract_no', '________________')
-    contract_date = title_data.get('contract_date', '___')
-    ikz = title_data.get('ikz', '________________')
-    
-    raw_name = title_data.get('project_name', '')
-    project_name = raw_name[0].upper() + raw_name[1:] if raw_name else ""
-    
-    customer = title_data.get('customer', '')
-    customer_signer = title_data.get('customer_signer', '________________')
-    company = title_data.get('company', '')
-    director = format_name(title_data.get('director', ''))
-
-    # Универсальная сборка: Должность с большой буквы + Фамилия И.О.
-    cust_post = title_data.get('customer_post', 'Заказчик').capitalize()
-    cust_fio = format_fio_universal(title_data.get('customer_fio', ''))
-    formatted_signer_customer = f"{cust_post} {cust_fio}"
-
-    exec_post = title_data.get('executor_post', 'Директор').capitalize()
-    exec_fio = format_fio_universal(title_data.get('director', ''))
-    formatted_signer_executor = f"{exec_post}" # Для правой части таблицы
-
-    # Стиль по умолчанию: Times New Roman 12
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.add_run(f"Информационно-аналитический отчет об исполнении условий\n").bold = True
+    p.add_run(f"Контракта № {t.get('contract_no', '___')} от «{t.get('contract_date', '___')}» 2025 г.\n").bold = True
+    p.add_run(f"Идентификационный код закупки: {t.get('ikz', '___')}.")
 
-    # --- ТИТУЛЬНЫЙ ЛИСТ ---
-    p_top = doc.add_paragraph()
-    p_top.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
-    # ЖИРНЫМ: Заголовок и Контракт (первая строка)
-    run1 = p_top.add_run("Информационно-аналитический отчет об исполнении условий\n")
-    run1.bold = True
-    run2 = p_top.add_run(f"Контракта № {contract_no} от «{contract_date}» 2025 г.\n")
-    run2.bold = True
-    p_top.add_run(f"Идентификационный код закупки: {ikz}.")
+    for _ in range(5): doc.add_paragraph()
+    doc.add_paragraph("ТОМ I").alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    for _ in range(3): doc.add_paragraph()
+    for label, val in [("Наименование предмета КОНТРАКТА :", t.get('project_name')), ("Заказчик:", t.get('customer')), ("Исполнитель:", t.get('company'))]:
+        p_l = doc.add_paragraph(); p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_l.add_run(label).bold = True
+        p_v = doc.add_paragraph(); p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_v.add_run(str(val)).italic = True
 
-    p_tom = doc.add_paragraph()
-    p_tom.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_tom.add_run("ТОМ I").bold = True
+    for _ in range(5): doc.add_paragraph()
+    tab = doc.add_table(rows=2, cols=2)
 
-    # Блоки с ЖИРНЫМИ заголовками
-    labels_values = [
-        ("Наименование предмета КОНТРАКТА :", project_name),
-        ("Заказчик:", customer),
-        ("Исполнитель:", company)
-    ]
-    
-    for label, value in labels_values:
-        p_h = doc.add_paragraph()
-        p_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_h.add_run(label).bold = True # ЖИРНЫМ заголовок
-        
-        p_v = doc.add_paragraph()
-        p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_v.add_run(value).italic = True # КУРСИВОМ данные
+    # Делаем первую букву заглавной
+    cust_post = str(t.get('customer_post', 'Должность')).capitalize()
+    exec_post = str(t.get('director_post', 'Должность')).capitalize()
 
-    for _ in range(4): doc.add_paragraph()
+    # Вставляем именно переменные cust_post и exec_post
+    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{cust_post}\n\n___________ / {format_fio_short(t.get('customer_fio'))}"
+    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{exec_post}\n\n___________ / {format_fio_short(t.get('director'))}"
+    tab.rows[1].cells[0].text = "м.п."
+    tab.rows[1].cells[1].text = "м.п."
 
-    # --- ТАБЛИЦА ПОДПИСЕЙ ---
-    table = doc.add_table(rows=2, cols=2)
-    table.width = doc.sections[0].page_width
-    
-    # Заказчик
-    p_l = table.rows[0].cells[0].paragraphs[0]
-    p_l.add_run("Отчет принят Заказчиком").bold = True
-    # ИСПОЛЬЗУЕМ УНИВЕРСАЛЬНУЮ ПЕРЕМЕННУЮ:
-    p_l.add_run(f"\n\n{formatted_signer_customer}\n\n_______________")
-    
-    # Исполнитель
-    p_r = table.rows[0].cells[1].paragraphs[0]
-    p_r.alignment = WD_ALIGN_PARAGRAPH.LEFT 
-    p_r.add_run("Отчет передан Исполнителем").bold = True
-    # ИСПОЛЬЗУЕМ УНИВЕРСАЛЬНУЮ ПЕРЕМЕННУЮ:
-    p_r.add_run(f"\n\n{exec_post}\n\n_______________ / {exec_fio}")
-    
-    # М.П.
-    table.rows[1].cells[0].paragraphs[0].add_run("м.п.")
-    table.rows[1].cells[1].paragraphs[0].add_run("м.п.")
+    return doc
 
+def create_final_report(t, report_body, req_body):
+    doc = build_title_page(t) # Используем уже готовую логику титульника
     doc.add_page_break()
 
-    # --- ТЕКСТ ОТЧЕТА (БЕЗ ПОДПИСЕЙ В КОНЦЕ) ---
-    doc.add_heading('ОТЧЕТ О ВЫПОЛНЕНИИ ТЕХНИЧЕСКОГО ЗАДАНИЯ', level=1)
-    for block in report_content.split('\n\n'):
-        p = doc.add_paragraph()
-        for part in block.split('**'):
-            run = p.add_run(part.replace('*', ''))
-            if part in block.split('**')[1::2]: run.bold = True
-            run.font.name = 'Times New Roman'
-            run.font.size = Pt(12)
+    # Добавляем тело отчета (копируем логику из build_report_body)
+    project_name = str(t.get('project_name', 'оказанию услуг')).strip()
+    head = doc.add_paragraph()
+    head.alignment = 1 # По центру
+    head.add_run(f"Отчет об оказании услуг по {project_name}").bold = True
+
+    doc.add_paragraph()
+
+    lines = clean_markdown(report_body).split('\n')
+
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+        para = doc.add_paragraph()
+        if re.match(r"^\d+\.", line):
+            para.add_run(line).bold = True
+        else:
+            para.add_run(line)
+        para.alignment = 3 # По ширине
 
     doc.add_page_break()
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
-    # Здесь вставляем requirements_list аналогично блоку выше
-    doc.add_paragraph(requirements_list)
+    doc.add_paragraph(clean_markdown(req_body))
 
     return doc
-        
-# --- 4. ОСНОВНОЙ БЛОК ЛОГИКИ ---
-user_pass = st.sidebar.text_input("Пароль", type="password")
-if user_pass != APP_PASSWORD: st.stop()
 
-uploaded_file = st.file_uploader("Загрузите контракт (DOCX)", type="docx")
-
-if uploaded_file:
-    # Если загружен новый файл — сбрасываем старые данные
-    if 'last_file' not in st.session_state or st.session_state.last_file != uploaded_file.name:
-        st.session_state.title_info = None
-        st.session_state.report_buffer = None
-        st.session_state.last_file = uploaded_file.name
-
-    doc_obj = Document(uploaded_file)
-    full_text = "\n".join([p.text for p in doc_obj.paragraphs])
+def build_report_body(report_text, req_text, t):
+    doc = Document()
+    style = doc.styles['Normal']
+    style.font.name = 'Times New Roman'
+    style.font.size = Pt(12)
     
-    # 1. Извлечение реквизитов (строго один раз для файла)
-    if not st.session_state.get('title_info'):
-        with st.spinner("Анализ титульных данных и ИКЗ..."):
-            res = client_ai.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content": f"""
-                    Извлеки данные из начала и конца контракта для титульного листа.
-                    ВАЖНО: 
-                    1. project_name (Наименование предмета) пиши С БОЛЬШОЙ БУКВЫ.
-                    2. Найди подписанта со стороны ЗАКАЗЧИКА (обычно в конце или начале): его должность и ФИО.
-                    
-                    Формат ответа — JSON с ключами:
-                    - contract_no (номер контракта, например "39/25/ГК")
-                    - contract_date (дата)
-                    - ikz (36 цифр)
-                    - project_name (Предмет контракта, С БОЛЬШОЙ БУКВЫ)
-                    - customer (Полное название Заказчика)
-                    - customer_signer (Должность и ФИО подписанта Заказчика, например: "Заместитель председателя Комитета Иванов И.И.")
-                    - company (Название Исполнителя)
-                    - director (ФИО директора Исполнителя)
-                    
-                    Текст для анализа: {full_text[:5000]} {full_text[-3000:]} 
-                """}],
-                response_format={ 'type': 'json_object' }
-            )
-            st.session_state['title_info'] = json.loads(res.choices[0].message.content)
+    # Динамический жирный заголовок по центру
+    project_name = str(t.get('project_name', 'оказанию услуг')).strip()
+    head = doc.add_paragraph()
+    head.alignment = 1 # 1 — это центр
+    head.add_run(f"Отчет об оказании услуг по {project_name}").bold = True
+    doc.add_paragraph()
 
-    meta = st.session_state['title_info']
-    st.info(f"Объект: {meta.get('project_name', 'Не определен')}")
+    # Разделение на жирные главы и обычный текст
+    lines = clean_markdown(report_text).split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+        para = doc.add_paragraph()
+        if re.match(r"^\d+\.", line): # Если строка начинается с цифры и точки
+            para.add_run(line).bold = True
+        else:
+            para.add_run(line)
+        para.alignment = 3 # 3 — это по ширине (решает ошибку AttributeError)
+    
+    doc.add_page_break()
+    doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
+    doc.add_paragraph(clean_markdown(req_text))
+    
+    return doc
+    
+# --- 3. ИНТЕРФЕЙС ---
+st.set_page_config(page_title="Генератор Отчетов 3.0", layout="wide")
 
-    with st.form("main_form"):
-        facts = st.text_area("Фактические детали выполнения (даты, количество и т.д.)")
-        if st.form_submit_button("Сгенерировать отчет"):
-            with st.spinner("Генерация отчета по пунктам ТЗ..."):
-                # --- СНАЧАЛА ОПРЕДЕЛЯЕМ ИНДЕКСЫ И КОНТЕКСТ ---
-                text_upper = full_text.upper()
-                tz_markers = ["ПРИЛОЖЕНИЕ № 1", "ТЕХНИЧЕСКОЕ ЗАДАНИЕ", "ОПИСАНИЕ ОБЪЕКТА ЗАКУПКИ"]
-                tz_index = -1
-                for marker in tz_markers:
-                    found = text_upper.find(marker)
-                    if found != -1:
-                        tz_index = found
-                        break
-                
-                if tz_index == -1:
-                    tz_index = 0 
-                
-                end_markers = ["ПРИЛОЖЕНИЕ № 2", "ПРИЛОЖЕНИЕ № 3", "РАСЧЕТ СТОИМОСТИ", "ПОДПИСИ СТОРОН"]
-                tz_end_index = len(full_text)
-                for marker in end_markers:
-                    found_end = text_upper.find(marker, tz_index + 100)
-                    if found_end != -1:
-                        tz_end_index = found_end
-                        break
-                
-                # --- ТЕПЕРЬ СОЗДАЕМ ПЕРЕМЕННЫЕ КОНТЕКСТА (Важно!) ---
-                # Теперь NameError исчезнет, так как переменная context_title создана ДО запроса
-                context_title = full_text[:1000] + "\n[...]\n" + full_text[-1000:]
-                context_tz_full = full_text[tz_index : tz_end_index]
+# --- ПАРОЛЬ В БОКОВОЙ ПАНЕЛИ ---
+with st.sidebar:
+    st.title("Авторизация")
+    if "auth" not in st.session_state: 
+        st.session_state.auth = False
+    pwd = st.text_input("Введите пароль", type="password")
+    if pwd == st.secrets["APP_PASSWORD"]:
+        st.session_state.auth = True
+    if not st.session_state.auth:
+        st.warning("Доступ ограничен. Введите пароль в поле выше.")
+        st.stop()
+    st.success("Доступ разрешен")
 
-                # --- ТЕПЕРЬ ДЕЛАЕМ ЗАПРОСЫ К ИИ ---
-                
-                # 1. Данные титульника
-                res_title = client_ai.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"""
-                        Извлеки СЫРЫЕ данные (как в тексте) в формате JSON. 
-                        Не сокращай ФИО сам! Просто найди полное имя.
-                        
-                        Поля:
-                        - contract_no: Номер из САМОЙ ПЕРВОЙ строки.
-                        - contract_date: Дата.
-                        - ikz: 36 цифр кода.
-                        - project_name: Предмет контракта (С БОЛЬШОЙ БУКВЫ).
-                        - customer: Название организации Заказчика.
-                        - customer_post: Должность подписанта Заказчика.
-                        - customer_fio: ФИО подписанта Заказчика.
-                        - company: Название Исполнителя.
-                        - executor_post: Должность руководителя Исполнителя.
-                        - director: ПОЛНОЕ ФИО руководителя Исполнителя.
+col1, col2 = st.columns(2)
 
-                        Текст: {context_title}
-                    """}],
-                    response_format={ 'type': 'json_object' }
-                )
-                
-                title_info = json.loads(res_title.choices[0].message.content)
-                st.session_state['title_info'] = title_info 
-                
-                # 2. Текст отчета
-                res_report = client_ai.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"Напиши подробный отчет о выполненных работах, используя ВСЁ это ТЗ: {context_tz_full}"}]
-                )
-                report_text = res_report.choices[0].message.content
-                
-                # 3. Требования
-                context_docs = context_tz_full + "\n" + full_text[-3000:]
-                res_req = client_ai.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[{"role": "user", "content": f"Выпиши список отчетных документов (акты, фото, видео) из этого текста: {context_docs}"}]
-                )
-                requirements_text = res_req.choices[0].message.content
-                
-                # --- СОХРАНЕНИЕ ---
-                doc_final = create_report_docx(report_text, title_info, requirements_text)
-                
-                buf = io.BytesIO()
-                doc_final.save(buf)
-                st.session_state['report_buffer'] = buf.getvalue()
-                st.session_state['current_no'] = title_info.get('contract_no', 'бн')
-                
-                st.success("Отчет готов!")
-
-# --- КНОПКА СКАЧИВАНИЯ (ВНЕ ФОРМЫ - без отступов) ---
-if st.session_state.get('report_buffer'):
-    raw_no = st.session_state.get('current_no', 'бн')
-    c_no = re.sub(r'[\\/*?:"<>|]', "_", str(raw_no))
-    st.download_button(
-        label=f"📥 Скачать отчет № {c_no}",
-        data=st.session_state['report_buffer'],
-        file_name=f"отчет и № {c_no}.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+# СТОЛБЕЦ 1: ТИТУЛЬНЫЙ ЛИСТ
+with col1:
+    st.header("📄 1. Титульный лист")
+    file_contract = st.file_uploader(
+    "Загрузите Контракт", 
+    type="docx", 
+    key="contract_loader", 
+    on_change=lambda: st.session_state.pop("t_info", None) # Удаляет данные старого контракта
     )
 
+    if file_contract:
+        if st.button("Сформировать Титульный лист"):
+            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
 
+            # Читаем только начало контракта
+            context = get_contract_start_text(file_contract)
+            res = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {
+                        "role": "system", "content": """Ты выполняешь функцию парсера данных для государственных контрактов. Работай ТОЛЬКО с тем текстом, который передан в текущем запросе. 
+                        Из предоставленного текста контракта извлеки параметры и верни их исключительно в формате JSON, без лишних пояснений.
+                        Запрещено использовать любые данные из предыдущих диалогов или внешних знаний. 
+                        Внимательно проверь, что ИКЗ — это именно код закупки, а не номер счета или ИНН. ИКЗ содержит до 36 цифр. 
+                        Если поле отсутствует, ставь null. 
+                        Не пытайся угадать или подставить значения по умолчанию."""
+                    },
+                    {
+                        "role": "user", 
+                        "content": f"""Извлеки данные из начала контракта и сформируй JSON объект с полями:
+                        - contract_no: Номер контракта (ищи сразу слова 'КОНТРАКТ №' или 'ДОГОВОР №')
+                        - contract_date: Дата контракта
+                        - ikz: Идентификационный код закупки (полностью включая цифры)
+                        - project_name: Предмет (название) контракта
+                        - customer: Полное наименование Заказчика
+                        - customer_post: Должность подписанта Заказчика (напр. Министр)
+                        - customer_fio: ФИО подписанта Заказчика
+                        - company: Полное наименование Исполнителя
+                        - director_post: Должность подписанта Исполнителя (напр. Генеральный директор)
+                        - director: ФИО подписанта Исполнителя
 
+                        Текст для анализа:
+                        {context}"""
+                    }
+                ],
+                response_format={'type': 'json_object'}
+            )
 
+            st.session_state.t_info = json.loads(res.choices[0].message.content)
+
+            # Собираем только титульник
+            doc_title = build_title_page(st.session_state.t_info)
+            buf_t = io.BytesIO()
+            doc_title.save(buf_t)
+            st.session_state.file_title_only = buf_t.getvalue()
+            st.success("Титульный лист готов!")
+
+        if "file_title_only" in st.session_state:
+            st.download_button("📥 Скачать Титульник", st.session_state.file_title_only, "Title_Page.docx")
+
+# СТОЛБЕЦ 2: РУКОПИСНЫЙ ОТЧЕТ
+
+with col2:
+    st.header("📝 2. Отчет по ТЗ")
+    file_tz = st.file_uploader(
+    "Загрузите Техзадание", 
+    type="docx", 
+    key="tz_loader", 
+    on_change=lambda: st.session_state.pop("raw_report_body", None) # Удаляет старый текст отчета
+    )
+
+    if file_tz:
+        if st.button("Сформировать Рукописный отчет"):
+            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com/v1")
+            raw_tz = get_text_from_file(file_tz)
+ 
+            with st.spinner("ИИ анализирует ТЗ и пишет текст..."):
+                # 1. Запрос к ИИ для формирования текста глав
+                res_body = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": """Ты техписатель. Сформируй отчет по правилам:
+                        1. Каждая глава начинается с номера и названия (например, 1. Организация мероприятия).
+                        2. ЗАГОЛОВОК ГЛАВЫ пиши в НАСТОЯЩЕМ времени.
+                        3. ОПИСАНИЕ внутри главы пиши в ПРОШЕДШЕМ времени (выполнено, оказано, организовано).
+                        4. ВАЖНО: Не используй символы разметки (** или #). Весь текст должен быть чистым."""},
+                        {"role": "user", "content": f"Сделай отчет из этого ТЗ:\n\n{raw_tz}"}
+                    ]
+                )
+
+                # 2. Запрос к ИИ для поиска требований
+                res_req = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": f"Найди требования к фото и документам в этом ТЗ: {raw_tz}"}]
+                )
+
+                # Сохраняем результаты в сессию
+                st.session_state.raw_report_body = res_body.choices[0].message.content
+                st.session_state.raw_requirements = res_req.choices[0].message.content
+
+                # 3. Сборка документа (передаем t_info для заголовка)
+                # Убедись, что в build_report_body теперь заложен логика жирных глав
+                doc_rep = build_report_body(
+                    st.session_state.raw_report_body, 
+                    st.session_state.raw_requirements,
+                    st.session_state.t_info if "t_info" in st.session_state else {}
+                )
+               
+                buf_r = io.BytesIO()
+                doc_rep.save(buf_r)
+                st.session_state.file_report_only = buf_r.getvalue()
+                st.success("Отчет сформирован!")
+
+        if "file_report_only" in st.session_state:
+            st.download_button("📥 Скачать Отчет (без титульника)", st.session_state.file_report_only, "Report_Only.docx")
+
+# --- КНОПКА ПОЛНОЙ СБОРКИ ---
+if "file_title_only" in st.session_state and "file_report_only" in st.session_state:
+    st.divider()
+    st.subheader("🏁 Финальный шаг")
+
+    if st.button("🚀 СОБРАТЬ ПОЛНЫЙ ОТЧЕТ", use_container_width=True):
+        # Используем функцию из Кода 2.0 для сборки всего документа
+        full_doc = create_final_report(
+            st.session_state.t_info, 
+            st.session_state.raw_report_body, 
+            st.session_state.raw_requirements
+        )
+
+        final_buf = io.BytesIO()
+        full_doc.save(final_buf)
+        st.session_state.full_ready_file = final_buf.getvalue()
+
+    if "full_ready_file" in st.session_state:
+        st.download_button(
+
+            label="🔥 СКАЧАТЬ ВЕСЬ ДОКУМЕНТ (ТИТУЛЬНИК + ОТЧЕТ)",
+            data=st.session_state.full_ready_file,
+            file_name="Full_Final_Report.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
