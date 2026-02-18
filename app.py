@@ -14,10 +14,27 @@ def get_text_from_file(file):
     return text
 
 def get_contract_start_text(file):
-    # Получаем весь текст и берем первые 5000 символов 
-    # (обычно этого за глаза хватает для всей "шапки" и первого раздела)
-    text = docx2txt.process(file)
-    return text[:5000]
+    """Считывает текст из таблиц и параграфов до начала 2-го раздела"""
+    doc = Document(file)
+    start_text = []
+    
+    # 1. Сначала вытаскиваем текст из всех таблиц (именно там ваш ИКЗ и №)
+    for table in doc.tables:
+        for row in table.rows:
+            row_content = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+            if row_content:
+                start_text.append(" ".join(row_content))
+
+    # 2. Затем добавляем обычные параграфы
+    for p in doc.paragraphs:
+        txt = p.text.strip()
+        if txt:
+            # Проверка на начало 2-го раздела (чтобы не кормить ИИ лишним)
+            if re.match(r"^2\.", txt): 
+                break
+            start_text.append(txt)
+            
+    return "\n".join(start_text)
 
 # --- 1. ОЧИСТКА ТЕКСТА ОТ СИМВОЛОВ ---
 def clean_markdown(text):
@@ -316,6 +333,7 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
 
 
