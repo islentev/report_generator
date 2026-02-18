@@ -165,7 +165,12 @@ col1, col2 = st.columns(2)
 # СТОЛБЕЦ 1: ТИТУЛЬНЫЙ ЛИСТ
 with col1:
     st.header("📄 1. Титульный лист")
-    file_contract = st.file_uploader("Загрузите Контракт", type="docx", key="contract_loader")
+    file_contract = st.file_uploader(
+    "Загрузите Контракт", 
+    type="docx", 
+    key="contract_loader", 
+    on_change=lambda: st.session_state.pop("t_info", None) # Удаляет данные старого контракта
+    )
 
     if file_contract:
         if st.button("Сформировать Титульный лист"):
@@ -217,7 +222,12 @@ with col1:
 
 with col2:
     st.header("📝 2. Отчет по ТЗ")
-    file_tz = st.file_uploader("Загрузите Техзадание", type="docx", key="tz_loader")
+    file_tz = st.file_uploader(
+    "Загрузите Техзадание", 
+    type="docx", 
+    key="tz_loader", 
+    on_change=lambda: st.session_state.pop("raw_report_body", None) # Удаляет старый текст отчета
+    )
 
     if file_tz:
         if st.button("Сформировать Рукописный отчет"):
@@ -290,4 +300,5 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
