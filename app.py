@@ -6,6 +6,18 @@ from openai import OpenAI
 import io
 import json
 import re
+import docx2txt
+
+def get_text_from_file(file):
+    # Извлекает абсолютно весь текст, включая тот, что в таблицах
+    text = docx2txt.process(file)
+    return text
+
+def get_contract_start_text(file):
+    # Получаем весь текст и берем первые 5000 символов 
+    # (обычно этого за глаза хватает для всей "шапки" и первого раздела)
+    text = docx2txt.process(file)
+    return text[:5000]
 
 # --- 1. ОЧИСТКА ТЕКСТА ОТ СИМВОЛОВ ---
 def clean_markdown(text):
@@ -192,7 +204,7 @@ with col1:
                     {
                         "role": "user", 
                         "content": f"""Извлеки данные из начала контракта и сформируй JSON объект с полями:
-                        - contract_number: Номер контракта (ищи сразу слова 'КОНТРАКТ №' или 'ДОГОВОР №')
+                        - contract_no: Номер контракта (ищи сразу слова 'КОНТРАКТ №' или 'ДОГОВОР №')
                         - contract_date: Дата контракта
                         - ikz: Идентификационный код закупки (полностью включая цифры)
                         - project_name: Предмет (название) контракта
@@ -304,6 +316,7 @@ if "file_title_only" in st.session_state and "file_report_only" in st.session_st
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
+
 
 
 
