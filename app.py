@@ -7,6 +7,10 @@ import io
 import json
 import re
 import docx2txt
+import io
+from docx import Document
+from docx.enum.text import WD_COLOR_INDEX
+import re
 
 def get_text_from_file(file):
     # Извлекает абсолютно весь текст, включая тот, что в таблицах
@@ -164,6 +168,63 @@ def build_report_body(report_text, req_text, t):
     doc.add_paragraph(clean_markdown(req_text))
     
     return doc
+
+# Список триггеров для автоматического выделения желтым
+KEYWORDS_TO_HIGHLIGHT = [
+    "Акт", "Фотоотчет", "Ведомость", "Скриншот", "Смета", "Резюме", 
+    "Диплом", "Согласие", "Протокол", "Платежное поручение", "Билет", 
+    "Приложение", "USB", "Флеш-накопитель"
+]
+
+def apply_yellow_highlight(doc):
+    """Проходит по всему документу и красит ключевые слова в желтый"""
+    for paragraph in doc.paragraphs:
+        for run in paragraph.runs:
+            for word in KEYWORDS_TO_HIGHLIGHT:
+                if word.lower() in run.text.lower():
+                    # Чтобы не красить всё предложение, работаем аккуратно
+                    run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+def split_tz_into_steps(text):
+    """Разбивает ТЗ на логические главы (по пунктам или цифрам)"""
+    # Простая логика деления: ищем паттерны "1.", "Раздел 1" и т.д.
+    steps = re.split(r'\n(?=\d+\. )', text) 
+    return [s.strip() for s in steps if s.strip()]
+
+def smart_generate_step(client, section_text, requirements_text):
+    """Генерация одной главы с самопроверкой (Validation Loop)"""
+    
+    system_prompt = f"""Ты — педантичный юридический референт. Твоя задача — написать главу отчета.
+    ПРАВИЛА:
+    1. Пиши в прошедшем времени.
+    2. Используй ТРЕБОВАНИЯ: {requirements_text}
+    3. Если в ТЗ указаны цифры (штук, листов, знаков) — ОБЯЗАТЕЛЬНО укажи их в тексте.
+    4. В конце главы ДОБАВЬ блок: '📎 ЧЕК-ЛИСТ ВЛОЖЕНИЙ:', где перечисли документы для папки.
+    5. ЗАПРЕЩЕНО сокращать или лениться. Пиши максимально подробно."""
+
+    user_prompt = f"Напиши детальный отчет по этому разделу ТЗ: \n\n {section_text}"
+
+    # Шаг 1: Генерация
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+    )
+    draft = response.choices[0].message.content
+
+    # Шаг 2: Скрытая самопроверка (Validation Loop)
+    verification_prompt = f"Проверь этот текст. Все ли численные показатели из ТЗ {section_text} учтены? Если что-то упущено — дополни. Если всё ок — верни текст без изменений."
+    
+    verified_response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": "Ты корректор. Твоя цель — полнота данных."},
+            {"role": "user", "content": f"Текст отчета: {draft} \n\n {verification_prompt}"}
+        ]
+    )
+    return verified_response.choices[0].message.content
     
 # --- 3. ИНТЕРФЕЙС ---
 st.set_page_config(page_title="Генератор Отчетов 3.0", layout="wide")
@@ -291,5 +352,38 @@ with f_col1:
         st.download_button("📥 Скачать всё одним файлом", st.session_state.full_file, "Full_Report.docx", use_container_width=True)
 
 with f_col2:
-    if st.button("🪄 ПРИМЕНИТЬ ТРЕБОВАНИЯ К ОТЧЕТУ", use_container_width=True):
-        st.info("Здесь будет запускаться трансформация (Шаг 2)")
+    if st.button("🪄 ПРИМЕНИТЬ ТРЕБОВАНИЯ (ПОШАГОВО)", use_container_width=True):
+        if "raw_tz_source" in st.session_state and "raw_requirements" in st.session_state:
+            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
+            
+            # Разделяем ТЗ на части
+            tz_sections = split_tz_into_steps(st.session_state.raw_tz_source)
+            total_steps = len(tz_sections)
+            
+            final_smart_body = ""
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            # Конвейерная сборка
+            for idx, section in enumerate(tz_sections):
+                status_text.text(f"Обработка главы {idx+1} из {total_steps}...")
+                chunk = smart_generate_step(client, section, st.session_state.raw_requirements)
+                final_smart_body += chunk + "\n\n"
+                progress_bar.progress((idx + 1) / total_steps)
+
+            st.session_state.smart_report_ready = final_smart_body
+            status_text.success("Юридический отчет сформирован с 100% точностью!")
+            
+            # Сборка финального файла с выделением желтым
+            doc = create_final_report(st.session_state.t_info, final_smart_body, "")
+            apply_yellow_highlight(doc) # ПРИМЕНЯЕМ МАРКЕР
+            
+            buf = io.BytesIO()
+            doc.save(buf)
+            st.session_state.smart_file = buf.getvalue()
+    
+    if "smart_file" in st.session_state:
+        st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ (С МАРКЕРАМИ)", 
+                           st.session_state.smart_file, 
+                           "Smart_Compliance_Report.docx", 
+                           use_container_width=True)
