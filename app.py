@@ -242,6 +242,16 @@ with st.sidebar:
         st.stop()
     st.success("Доступ разрешен")
 
+# Кнопка сброса в боковой панели (самый удобный вариант)
+with st.sidebar:
+    st.title("Управление")
+    if st.button("♻️ СБРОСИТЬ ВСЕ ДАННЫЕ", use_container_width=True, type="primary"):
+        # Очищаем все ключи в session_state
+        for key in st.session_state.keys():
+            del st.session_state[key]
+        # Перезагружаем приложение для полной очистки полей ввода
+        st.rerun()
+
 # --- НОВАЯ СТРУКТУРА ИНТЕРФЕЙСА (3 КОЛОНКИ) ---
 col1, col2, col3 = st.columns(3)
 
@@ -387,3 +397,4 @@ with f_col2:
                            st.session_state.smart_file, 
                            "Smart_Compliance_Report.docx", 
                            use_container_width=True)
+
