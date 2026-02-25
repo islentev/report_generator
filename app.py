@@ -153,11 +153,23 @@ with st.sidebar:
     if pwd == st.secrets["APP_PASSWORD"]: st.session_state.auth = True
     if not st.session_state.auth: st.stop()
     if st.button("♻️ СБРОСИТЬ ВСЕ ДАННЫЕ", use_container_width=True, type="primary"):
+        # 1. Полная очистка session_state
         for key in list(st.session_state.keys()):
-            if key != "reset_counter": 
+            if key != "reset_counter":
                 del st.session_state[key]
-        # ЭТА СТРОКА ОБНУЛЯЕТ ОКНА ВВОДА:
-        st.session_state.reset_counter += 1 
+        
+        # 2. Явное обнуление переменных кэша текста (чтобы ИИ не подтянул старое)
+        st.session_state.raw_tz_source = ""
+        st.session_state.raw_report_body = ""
+        st.session_state.raw_requirements = ""
+        st.session_state.t_info = {}
+        
+        # 3. Смена ключей виджетов (то, что мы делали со счетчиком)
+        st.session_state.reset_counter += 1
+        
+        # 4. Очистка кэша самого Streamlit (на всякий случай)
+        st.cache_data.clear()
+        
         st.rerun()
     
 col1, col2, col3 = st.columns(3)
@@ -191,11 +203,28 @@ with col2:
     if f_tz: st.session_state.raw_tz_source = get_text_from_file(f_tz)
     
     if st.button("⚙️ Сгенерировать текст", use_container_width=True):
-        if "raw_tz_source" in st.session_state:
+        tz_content = m_tz_area.strip() if m_tz_area.strip() else ""
+        
+        if tz_content:
+            st.session_state.raw_tz_source = tz_content 
             client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
+            
             res = client.chat.completions.create(
                 model="deepseek-chat",
-                messages=[{"role": "user", "content": f"Напиши черновик отчета по ТЗ: {st.session_state.raw_tz_source}"}]
+                messages=[{
+                    "role": "system", 
+                    "content": """Ты — профессиональный юридический редактор. 
+                    Твоя задача: переработать Техническое задание в Отчет.
+                    
+                    ЖЕСТКИЕ ПРАВИЛА:
+                    1. ЗАБЫТЬ ВСЁ: Работай только с тем текстом, который прислал пользователь сейчас. Не используй данные из прошлых диалогов.
+                    2. ВРЕМЯ: Весь текст отчета пиши СТРОГО В ПРОШЕДШЕМ ВРЕМЕНИ ('выполнено', 'организовано', 'оказано').
+                    3. ЗАПРЕТНЫЕ СЛОВА: Категорически запрещено использовать слова 'должен', 'обязан', 'будет', 'необходимо', 'требуется'.
+                    4. ЦИФРЫ И ОБЪЕМЫ: Переноси все цифры, даты, количество знаков, количество фотографий и технические параметры из ТЗ в отчет без сокращений.
+                    5. СТИЛЬ: Заголовки разделов оставляй в настоящем времени, а описание действий внутри них — в прошедшем.
+                    6. НУМЕРАЦИЯ: Сохраняй структуру пунктов (1.1, 1.2...) точно как в ТЗ."""
+                },
+                {"role": "user", "content": f"ТРАНСФОРМИРУЙ ЭТО ТЗ В ОТЧЕТ:\n\n{tz_content}"}]
             )
             st.session_state.raw_report_body = res.choices[0].message.content
 
@@ -246,6 +275,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
