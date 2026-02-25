@@ -178,17 +178,25 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.header("📄 1. Титульный лист")
     f_title = st.file_uploader("Контракт (DOCX)", type="docx")
-    t_context_area = st.text_area("Название", height=150, key=f"t_area_{st.session_state.reset_counter}")
+    # Добавили название вместо "Название"
+    t_context_area = st.text_area("ИЛИ вставьте начало контракта сюда:", height=150, key=f"t_area_{st.session_state.reset_counter}")
+    
     if st.button("🔍 Извлечь реквизиты", use_container_width=True):
-        if f_title:
-            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
+        # ПРИОРИТЕТ: сначала текст из окна, если пусто - файл
+        txt = t_context_area.strip() if t_context_area.strip() else ""
+        if not txt and f_title:
             txt = get_contract_start_text(f_title)
+            
+        if txt:
+            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
             res = client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[{"role": "system", "content": "Верни JSON реквизитов."}, {"role": "user", "content": txt}],
                 response_format={'type': 'json_object'}
             )
             st.session_state.t_info = json.loads(res.choices[0].message.content)
+        else:
+            st.warning("Нет данных для анализа (вставьте текст или загрузите файл)")
 
     if "t_info" in st.session_state:
         ti = st.session_state.t_info
@@ -199,14 +207,16 @@ with col1:
 with col2:
     st.header("📝 2. Отчет (ТЗ)")
     f_tz = st.file_uploader("Техзадание (DOCX)", type="docx")
-    m_tz_area = st.text_area("Название", height=150, key=f"tz_area_{st.session_state.reset_counter}")
-    if f_tz: st.session_state.raw_tz_source = get_text_from_file(f_tz)
+    m_tz_area = st.text_area("ИЛИ вставьте текст ТЗ сюда:", height=150, key=f"tz_area_{st.session_state.reset_counter}")
     
     if st.button("⚙️ Сгенерировать текст", use_container_width=True):
+        # Берем текст из окна, если пусто - из файла
         tz_content = m_tz_area.strip() if m_tz_area.strip() else ""
-        
+        if not tz_content and f_tz:
+            tz_content = get_text_from_file(f_tz)
+            
         if tz_content:
-            st.session_state.raw_tz_source = tz_content 
+            st.session_state.raw_tz_source = tz_content  # СОХРАНЯЕМ ДЛЯ ПОШАГОВОЙ СБОРКИ
             client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
             
             res = client.chat.completions.create(
@@ -227,6 +237,8 @@ with col2:
                 {"role": "user", "content": f"ТРАНСФОРМИРУЙ ЭТО ТЗ В ОТЧЕТ:\n\n{tz_content}"}]
             )
             st.session_state.raw_report_body = res.choices[0].message.content
+        else:
+            st.warning("Данные ТЗ отсутствуют")
 
     if "raw_report_body" in st.session_state:
         st.session_state.raw_report_body = st.text_area("Черновик:", st.session_state.raw_report_body, height=300)
@@ -275,6 +287,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
