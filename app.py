@@ -166,7 +166,7 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.header("📄 1. Титульный лист")
     f_title = st.file_uploader("Контракт (DOCX)", type="docx")
-    t_context_area = st.text_area("ИЛИ вставьте начало контракта сюда:", height=150)
+    t_context_area = st.text_area("Название", height=150, key=f"t_area_{st.session_state.reset_counter}")
     if st.button("🔍 Извлечь реквизиты", use_container_width=True):
         if f_title:
             client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
@@ -187,7 +187,7 @@ with col1:
 with col2:
     st.header("📝 2. Отчет (ТЗ)")
     f_tz = st.file_uploader("Техзадание (DOCX)", type="docx")
-    m_tz_area = st.text_area("ИЛИ вставьте текст ТЗ сюда:", height=150)
+    m_tz_area = st.text_area("Название", height=150, key=f"t_area_{st.session_state.reset_counter}")
     if f_tz: st.session_state.raw_tz_source = get_text_from_file(f_tz)
     
     if st.button("⚙️ Сгенерировать текст", use_container_width=True):
@@ -246,6 +246,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
