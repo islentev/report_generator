@@ -96,7 +96,7 @@ def build_title_page(t):
         val = t.get(key, '___')
         if isinstance(val, dict):
             return val.get('name', val.get('value', str(val)))
-        return str(val) if val else '___
+        return str(val) if val else '___'
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.add_run(f"Информационно-аналитический отчет об исполнении условий\n").bold = True
@@ -320,6 +320,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
