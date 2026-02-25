@@ -187,7 +187,7 @@ with col1:
 with col2:
     st.header("📝 2. Отчет (ТЗ)")
     f_tz = st.file_uploader("Техзадание (DOCX)", type="docx")
-    m_tz_area = st.text_area("Название", height=150, key=f"t_area_{st.session_state.reset_counter}")
+    m_tz_area = st.text_area("Название", height=150, key=f"tz_area_{st.session_state.reset_counter}")
     if f_tz: st.session_state.raw_tz_source = get_text_from_file(f_tz)
     
     if st.button("⚙️ Сгенерировать текст", use_container_width=True):
@@ -246,6 +246,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
