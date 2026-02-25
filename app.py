@@ -151,7 +151,10 @@ with st.sidebar:
     if pwd == st.secrets["APP_PASSWORD"]: st.session_state.auth = True
     if not st.session_state.auth: st.stop()
     if st.button("♻️ СБРОСИТЬ ВСЕ ДАННЫЕ", use_container_width=True, type="primary"):
-        for k in list(st.session_state.keys()): del st.session_state[k]
+        # 1. Очищаем состояние сессии
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.cache_data.clear()
         st.rerun()
 
 col1, col2, col3 = st.columns(3)
@@ -240,4 +243,5 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
