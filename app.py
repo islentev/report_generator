@@ -7,43 +7,108 @@ import io
 import json
 import re
 import docx2txt
-import io
-from docx import Document
 from docx.enum.text import WD_COLOR_INDEX
-import re
-
-def get_text_from_file(file):
-    # Извлекает абсолютно весь текст, включая тот, что в таблицах
-    text = docx2txt.process(file)
-    return text
 
 def get_contract_start_text(file):
     doc = Document(file)
     full_text = []
     
-    # Читаем таблицы (там часто № и ИКЗ)
+    # Сначала собираем текст из таблиц
     for table in doc.tables:
         for row in table.rows:
             full_text.append(" ".join(cell.text.strip() for cell in row.cells))
     
-    # Читаем параграфы
-    for p in doc.paragraphs:
-        full_text.append(p.text.strip())
-        
-    # Склеиваем и берем первые 5000 символов (этого хватит до 3-5 страницы)
-    context = "\n".join(full_text)
-    return context[:1000]
-
-    # 2. Затем добавляем обычные параграфы
+    # Затем собираем параграфы
     for p in doc.paragraphs:
         txt = p.text.strip()
         if txt:
-            # Проверка на начало 2-го раздела (чтобы не кормить ИИ лишним)
+            # Прекращаем чтение, если дошли до 2-го раздела (экономия токенов)
             if re.match(r"^2\.", txt): 
                 break
-            start_text.append(txt)
+            full_text.append(txt)
             
-    return "\n".join(start_text)
+    return "\n".join(full_text)[:2000] # Возвращаем собранный текст
+
+def smart_generate_step_strict(client, section_text, requirements_text):
+    """
+    Полный цикл: 
+    1. Генерация черновика
+    2. Самопроверка на соответствие ТЗ
+    3. Исправление (если найдены ошибки)
+    """
+    
+    system_prompt = f"""Ты — юридический редактор. Перепиши пункты ТЗ в Отчет.
+    
+    ПРАВИЛА ТРАНСФОРМАЦИИ:
+    1. НУМЕРАЦИЯ: Сохраняй нумерацию пунктов (1.1, 1.2...) в точности как в ТЗ.
+    2. ЗАГОЛОВКИ: Пиши в НАСТОЯЩЕМ времени (напр. 'Оказание услуг...').
+    3. ТЕКСТ ПУНКТОВ: Пиши строго в ПРОШЕДШЕМ времени (напр. 'Услуги оказаны', 'Закуплено').
+    4. ЗАПРЕТНЫЕ СЛОВА: Полностью убери слова 'должен', 'обязан', 'необходимо', 'требуется', 'будет'. 
+       Заменяй их на свершившийся факт ('выполнено', 'обеспечено', 'произведено').
+    5. ПОЛНОТА: Каждая техническая характеристика из ТЗ должна быть упомянута. Если в ТЗ указан вес 10г, в отчете должно быть 'составил 10г'.
+    6. ТРЕБОВАНИЯ: Учти правила оформления: {requirements_text}"""
+
+    user_prompt = f"ТРАНСФОРМИРУЙ СЛЕДУЮЩИЙ ПУНКТ ТЗ В ОТЧЕТ:\n\n{section_text}"
+
+   # --- ШАГ 1: ГЕНЕРАЦИЯ ЧЕРНОВИКА ---
+    res = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"ТРАНСФОРМИРУЙ СЛЕДУЮЩИЙ ПУНКТ ТЗ В ОТЧЕТ:\n\n{section_text}"}
+        ],
+        temperature=0.1
+    )
+    first_draft = res.choices[0].message.content
+
+    # --- ШАГ 2: САМОПРОВЕРКА (АНАЛИЗ ОШИБОК) ---
+    verify_prompt = f"""Сравни оригинальное ТЗ и сгенерированный Отчет. 
+    Найди упущенные детали (цифры, характеристики, предметы).
+    Выдай ответ строго в формате:
+    ОШИБОК: [число]
+    СПИСОК: [что именно пропущено]
+    Если всё идеально, напиши 'ОШИБОК: 0'"""
+
+    verification = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": "Ты контролер качества. Сравнивай текст отчета с исходным ТЗ на полноту данных."},
+            {"role": "user", "content": f"ОРИГИНАЛ ТЗ: {section_text}\n\nОТЧЕТ: {first_draft}\n\n{verify_prompt}"}
+        ],
+        temperature=0
+    )
+    v_result = verification.choices[0].message.content
+
+    # --- ШАГ 3: ИСПРАВЛЕНИЕ (ЕСЛИ НУЖНО) ---
+    if "ОШИБОК: 0" not in v_result:
+        # Если ошибки найдены, отправляем на доработку
+        final_res = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"В твоем предыдущем отчете найдены ошибки: {v_result}. \nИсправь отчет, добавив пропущенные данные из ТЗ: {section_text}"}
+            ],
+            temperature=0.1
+        )
+        return final_res.choices[0].message.content
+    
+    # Если ошибок нет, возвращаем первый черновик
+    return first_draft
+
+def self_verify_section(client, original_tz, generated_report):
+    """Функция самопроверки: ИИ ищет расхождения с ТЗ"""
+    verify_prompt = f"""Сравни оригинальное ТЗ и сгенерированный Отчет. 
+    Найди упущенные детали (цифры, характеристики, предметы).
+    Выдай ответ в формате:
+    ОШИБОК: [число]
+    СПИСОК: [что пропущено]
+    Если ошибок 0, напиши 'ОШИБОК: 0'"""
+
+    res = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[{"role": "user", "content": f"ТЗ: {original_tz}\n\nОТЧЕТ: {generated_report}\n\n{verify_prompt}"}]
+    )
+    return res.choices[0].message.content
 
 # --- 1. ОЧИСТКА ТЕКСТА ОТ СИМВОЛОВ ---
 def clean_markdown(text):
@@ -130,7 +195,7 @@ def create_final_report(t, report_body, req_body):
             para.add_run(line).bold = True
         else:
             para.add_run(line)
-        para.alignment = 3 # По ширине
+        para.alignment = 3 # WD_ALIGN_PARAGRAPH.CENTER
 
     doc.add_page_break()
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
@@ -161,7 +226,7 @@ def build_report_body(report_text, req_text, t):
             para.add_run(line).bold = True
         else:
             para.add_run(line)
-        para.alignment = 3 # 3 — это по ширине (решает ошибку AttributeError)
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
     doc.add_page_break()
     doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
@@ -188,46 +253,9 @@ def apply_yellow_highlight(doc):
 def split_tz_into_steps(text):
     """Разбивает ТЗ на логические главы (по пунктам или цифрам)"""
     # Простая логика деления: ищем паттерны "1.", "Раздел 1" и т.д.
-    steps = re.split(r'\n(?=\d+\. )', text) 
+    steps = re.split (r'\n(?=\d+\.)', text) 
     return [s.strip() for s in steps if s.strip()]
-
-def smart_generate_step(client, section_text, requirements_text):
-    """Генерация с ПРИНУДИТЕЛЬНЫМ сохранением всех пунктов ТЗ"""
-    
-    system_prompt = f"""Ты — юридический эксперт-исполнитель. Твоя задача — ПЕРЕПИСАТЬ ТЗ в отчет.
-    
-    КРИТИЧЕСКИЕ ПРАВИЛА:
-    1. НЕ СОКРАЩАЙ ТЕКСТ. Если в ТЗ указан конкретный предмет (например, 'карабины' или 'шоколад'), он ОБЯЗАТЕЛЬНО должен быть в отчете.
-    2. Сохраняй структуру нумерации пунктов как в оригинале.
-    3. Используй ТРЕБОВАНИЯ К ОФОРМЛЕНИЮ: {requirements_text}
-    4. Для каждого упомянутого документа или предмета добавляй маркер [ВЛОЖИТЬ ДОКУМЕНТ].
-    5. В конце каждого раздела пиши детальный ЧЕК-ЛИСТ."""
-
-    user_prompt = f"Возьми этот текст ТЗ и преврати его в подробный отчет в прошедшем времени, не упуская ни одной детали: \n\n {section_text}"
-
-    # Шаг 1: Первичная генерация
-    response = client.chat.completions.create(
-        model="deepseek-chat", # Или gpt-4o для более длинных текстов
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        temperature=0.1 # Минимальная температура, чтобы ИИ меньше фантазировал и больше копировал
-    )
-    return response.choices[0].message.content
-
-    # Шаг 2: Скрытая самопроверка (Validation Loop)
-    verification_prompt = f"Проверь этот текст. Все ли численные показатели из ТЗ {section_text} учтены? Если что-то упущено — дополни. Если всё ок — верни текст без изменений."
-    
-    verified_response = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": "Ты корректор. Твоя цель — полнота данных."},
-            {"role": "user", "content": f"Текст отчета: {draft} \n\n {verification_prompt}"}
-        ]
-    )
-    return verified_response.choices[0].message.content
-    
+  
 # --- 3. ИНТЕРФЕЙС ---
 st.set_page_config(page_title="Генератор Отчетов 3.0", layout="wide")
 
@@ -364,40 +392,41 @@ with f_col1:
         st.download_button("📥 Скачать всё одним файлом", st.session_state.full_file, "Full_Report.docx", use_container_width=True)
 
 with f_col2:
-    if st.button("🪄 ПРИМЕНИТЬ ТРЕБОВАНИЯ (ПОШАГОВО)", use_container_width=True):
-        if "raw_tz_source" in st.session_state and "raw_requirements" in st.session_state:
+    if st.button("🚀 ЗАПУСТИТЬ ПОШАГОВУЮ СБОРКУ (БЕЗ ПОТЕРЬ)", use_container_width=True):
+        if all(k in st.session_state for k in ["t_info", "raw_tz_source", "raw_requirements"]):
             client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
             
-            # Разделяем ТЗ на части
-            tz_sections = split_tz_into_steps(st.session_state.raw_tz_source)
-            total_steps = len(tz_sections)
+            # Разбиваем ТЗ на мелкие пункты (по регулярному выражению нумерации)
+            steps = re.split(r'\n(?=\d+\.?\d*)', st.session_state.raw_tz_source)
+            steps = [s.strip() for s in steps if s.strip()]
             
-            final_smart_body = ""
+            final_report_text = ""
             progress_bar = st.progress(0)
-            status_text = st.empty()
-
-            # Конвейерная сборка
-            for idx, section in enumerate(tz_sections):
-                status_text.text(f"Обработка главы {idx+1} из {total_steps}...")
-                chunk = smart_generate_step(client, section, st.session_state.raw_requirements)
-                final_smart_body += chunk + "\n\n"
-                progress_bar.progress((idx + 1) / total_steps)
-
-            st.session_state.smart_report_ready = final_smart_body
-            status_text.success("Юридический отчет сформирован с 100% точностью!")
             
-            # Сборка финального файла с выделением желтым
-            doc = create_final_report(st.session_state.t_info, final_smart_body, "")
-            apply_yellow_highlight(doc) # ПРИМЕНЯЕМ МАРКЕР
+            for i, step in enumerate(steps):
+                st.write(f"⚙️ Обработка пункта {i+1}...")
+                # Одной этой строки теперь достаточно, проверка внутри нее
+                report_chunk = smart_generate_step_strict(client, step, st.session_state.raw_requirements)
+                final_report_text += report_chunk + "\n\n"
+
+            st.session_state.smart_report_ready = final_report_text
+            
+            # Сборка и подсветка желтым (согласно вашему желанию)
+            doc = create_final_report(st.session_state.t_info, final_report_text, "")
+            apply_yellow_highlight(doc)
             
             buf = io.BytesIO()
             doc.save(buf)
             st.session_state.smart_file = buf.getvalue()
+            st.success("✅ Сборка завершена. Проверьте чеклисты в конце глав!")
+        else:
+            st.error("Заполните все три колонки перед запуском!")
     
     if "smart_file" in st.session_state:
         st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ (С МАРКЕРАМИ)", 
                            st.session_state.smart_file, 
                            "Smart_Compliance_Report.docx", 
                            use_container_width=True)
+
 
 
