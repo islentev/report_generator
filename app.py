@@ -7,6 +7,8 @@ from openai import OpenAI
 import io
 import json
 import re
+if "reset_counter" not in st.session_state:
+    st.session_state.reset_counter = 0
 
 # --- 1. ФУНКЦИИ ПАРСИНГА (ТВОИ ОРИГИНАЛЬНЫЕ) ---
 
@@ -151,10 +153,13 @@ with st.sidebar:
     if pwd == st.secrets["APP_PASSWORD"]: st.session_state.auth = True
     if not st.session_state.auth: st.stop()
     if st.button("♻️ СБРОСИТЬ ВСЕ ДАННЫЕ", use_container_width=True, type="primary"):
-        # 1. Очищаем состояние сессии
+        # Очищаем все данные
         for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.cache_data.clear()
+            if key != "reset_counter": # Счетчик не трогаем
+                del st.session_state[key]
+        
+        # Увеличиваем счетчик — это заставит поля ввода обнулиться
+        st.session_state.reset_counter += 1
         st.rerun()
 
 col1, col2, col3 = st.columns(3)
@@ -243,5 +248,6 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
