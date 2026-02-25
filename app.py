@@ -92,27 +92,41 @@ def build_title_page(t):
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
+    def get_clean_val(key):
+        val = t.get(key, '___')
+        if isinstance(val, dict):
+            return val.get('name', val.get('value', str(val)))
+        return str(val) if val else '___
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.add_run(f"Информационно-аналитический отчет об исполнении условий\n").bold = True
-    p.add_run(f"Контракта № {t.get('contract_no', '___')} от «{t.get('contract_date', '___')}» 2025 г.\n").bold = True
-    p.add_run(f"Идентификационный код закупки: {t.get('ikz', '___')}.")
+    p.add_run(f"Контракта № {get_clean_val('contract_no')} от «{get_clean_val('contract_date')}» 2025 г.\n").bold = True
+    p.add_run(f"Идентификационный код закупки: {get_clean_val('ikz')}.")
+    
     for _ in range(5): doc.add_paragraph()
     doc.add_paragraph("ТОМ I").alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for label, val in [("Наименование предмета КОНТРАКТА :", t.get('project_name')), ("Заказчик:", t.get('customer')), ("Исполнитель:", t.get('company'))]:
-        p_l = doc.add_paragraph(); p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    for label, val_key in [
+        ("Наименование предмета КОНТРАКТА :", 'project_name'), 
+        ("Заказчик:", 'customer'), 
+        ("Исполнитель:", 'company')
+    ]:
+        p_l = doc.add_paragraph()
+        p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_l.add_run(label).bold = True
-        p_v = doc.add_paragraph(); p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_v.add_run(str(val)).italic = True
+        p_v = doc.add_paragraph()
+        p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_v.add_run(get_clean_val(val_key)).italic = True
+        
     for _ in range(5): doc.add_paragraph()
     tab = doc.add_table(rows=2, cols=2)
-    c_post = str(t.get('customer_post', 'Должность')).capitalize()
-    e_post = str(t.get('director_post', 'Должность')).capitalize()
-    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{c_post}\n\n___________ / {format_fio_short(t.get('customer_fio'))}"
-    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{e_post}\n\n___________ / {format_fio_short(t.get('director'))}"
+    c_post = get_clean_val('customer_post').capitalize()
+    e_post = get_clean_val('director_post').capitalize()
+    
+    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{c_post}\n\n___________ / {format_fio_short(get_clean_val('customer_fio'))}"
+    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{e_post}\n\n___________ / {format_fio_short(get_clean_val('director'))}"
     tab.rows[1].cells[0].text = "м.п."; tab.rows[1].cells[1].text = "м.п."
     return doc
-
 def apply_yellow_highlight(doc):
     keywords = ["Акт", "Фотоотчет", "Ведомость", "Скриншот", "Смета", "Резюме", "USB", "Флеш-накопитель"]
     for paragraph in doc.paragraphs:
@@ -124,21 +138,33 @@ def apply_yellow_highlight(doc):
 def create_final_report(t, report_body, req_body):
     doc = build_title_page(t)
     doc.add_page_break()
-    p_name = str(t.get('project_name', 'услуг')).strip()
+    
+    # Чтобы не было "Отчет об оказании услуг по услуг"
+    p_name = t.get('project_name', '')
+    if isinstance(p_name, dict): p_name = p_name.get('name', '')
+    p_name = str(p_name).strip() if p_name else "услугам"
+
     head = doc.add_paragraph()
     head.alignment = WD_ALIGN_PARAGRAPH.CENTER
     head.add_run(f"Отчет об оказании услуг по {p_name}").bold = True
-    for line in clean_markdown(report_body).split('\n'):
+    
+    # Очищаем основной текст от дублей и пустых строк
+    lines = clean_markdown(report_body).split('\n')
+    for line in lines:
         line = line.strip()
         if not line: continue
         para = doc.add_paragraph()
         run = para.add_run(line)
         if re.match(r"^\d+\.", line): run.bold = True
-        para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY # ПО ШИРИНЕ
+        para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        
     if req_body:
         doc.add_page_break()
-        doc.add_heading('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ', level=1)
+        p_req = doc.add_paragraph()
+        p_req.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_req.add_run('ТРЕБОВАНИЯ К ПРЕДОСТАВЛЯЕМОЙ ДОКУМЕНТАЦИИ').bold = True
         doc.add_paragraph(clean_markdown(req_body)).alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        
     apply_yellow_highlight(doc)
     return doc
 
@@ -271,22 +297,30 @@ with f_col1:
 
 with f_col2:
     if st.button("🚀 ЗАПУСТИТЬ ПОШАГОВУЮ СБОРКУ", use_container_width=True):
-        if all(k in st.session_state for k in ["t_info", "raw_tz_source"]):
+        if "t_info" in st.session_state and st.session_state.get('raw_tz_source'):
             client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
-            steps = [s.strip() for s in re.split(r'\n(?=\d+\.)', st.session_state.raw_tz_source) if s.strip()]
-            final_text = ""
+            # Разрезаем по пунктам типа 1.1., 2.1.
+            steps = [s.strip() for s in re.split(r'\n(?=\d+\.\d+)', st.session_state.raw_tz_source) if s.strip()]
+            
+            final_text_parts = []
             pb = st.progress(0)
             for i, step in enumerate(steps):
-                final_text += smart_generate_step_strict(client, step, st.session_state.get('raw_requirements', '')) + "\n\n"
+                part = smart_generate_step_strict(client, step, st.session_state.get('raw_requirements', ''))
+                final_text_parts.append(part)
                 pb.progress((i + 1) / len(steps))
-            doc = create_final_report(st.session_state.t_info, final_text, st.session_state.get('raw_requirements', ''))
-            buf = io.BytesIO(); doc.save(buf)
+            
+            # Соединяем один раз
+            full_smart_text = "\n\n".join(final_text_parts)
+            doc = create_final_report(st.session_state.t_info, full_smart_text, st.session_state.get('raw_requirements', ''))
+            buf = io.BytesIO()
+            doc.save(buf)
             st.session_state.smart_file = buf.getvalue()
-
+            st.success("Умная сборка завершена!")
 if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
