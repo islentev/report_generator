@@ -188,6 +188,10 @@ with st.sidebar:
         st.session_state.raw_report_body = ""
         st.session_state.raw_requirements = ""
         st.session_state.t_info = {}
+
+        # Это принудительно очистит text_area в колонках
+        st.session_state[f"t_area_{st.session_state.reset_counter}"] = ""
+        st.session_state[f"tz_area_{st.session_state.reset_counter}"] = ""
         
         # 3. Смена ключей виджетов (то, что мы делали со счетчиком)
         st.session_state.reset_counter += 1
@@ -374,6 +378,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
