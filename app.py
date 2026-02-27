@@ -96,41 +96,36 @@ def build_title_page(t):
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
-    def get_clean_val(key):
-        val = t.get(key, '___')
-        if isinstance(val, dict):
-            return val.get('name', val.get('value', str(val)))
-        return str(val) if val else '___'
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.add_run(f"Информационно-аналитический отчет об исполнении условий\n").bold = True
-    p.add_run(f"Контракта № {get_clean_val('contract_no')} от «{get_clean_val('contract_date')}» 2025 г.\n").bold = True
-    p.add_run(f"Идентификационный код закупки: {get_clean_val('ikz')}.")
-    
+    p.add_run(f"Контракта № {t.get('contract_no', '___')} от «{t.get('contract_date', '___')}» 2025 г.\n").bold = True
+    p.add_run(f"Идентификационный код закупки: {t.get('ikz', '___')}.")
+
     for _ in range(5): doc.add_paragraph()
     doc.add_paragraph("ТОМ I").alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
-    for label, val_key in [
-        ("Наименование предмета КОНТРАКТА :", 'project_name'), 
-        ("Заказчик:", 'customer'), 
-        ("Исполнитель:", 'company')
-    ]:
-        p_l = doc.add_paragraph()
-        p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    for label, val in [("Наименование предмета КОНТРАКТА :", t.get('project_name')), ("Заказчик:", t.get('customer')), ("Исполнитель:", t.get('company'))]:
+        p_l = doc.add_paragraph(); p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_l.add_run(label).bold = True
-        p_v = doc.add_paragraph()
-        p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_v.add_run(get_clean_val(val_key)).italic = True
-        
+        p_v = doc.add_paragraph(); p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_v.add_run(str(val)).italic = True
+
     for _ in range(5): doc.add_paragraph()
     tab = doc.add_table(rows=2, cols=2)
-    c_post = get_clean_val('customer_post').capitalize()
-    e_post = get_clean_val('director_post').capitalize()
-    
-    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{c_post}\n\n___________ / {format_fio_short(get_clean_val('customer_fio'))}"
-    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{e_post}\n\n___________ / {format_fio_short(get_clean_val('director'))}"
-    tab.rows[1].cells[0].text = "м.п."; tab.rows[1].cells[1].text = "м.п."
+
+    # Делаем первую букву заглавной
+    cust_post = str(t.get('customer_post', 'Должность')).capitalize()
+    exec_post = str(t.get('director_post', 'Должность')).capitalize()
+
+    # Вставляем именно переменные cust_post и exec_post
+    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{cust_post}\n\n___________ / {format_fio_short(t.get('customer_fio'))}"
+    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{exec_post}\n\n___________ / {format_fio_short(t.get('director'))}"
+    tab.rows[1].cells[0].text = "м.п."
+    tab.rows[1].cells[1].text = "м.п."
+
     return doc
+    
 def apply_yellow_highlight(doc):
     keywords = ["Акт", "Фотоотчет", "Ведомость", "Скриншот", "Смета", "Резюме", "USB", "Флеш-накопитель"]
     for paragraph in doc.paragraphs:
@@ -207,32 +202,41 @@ col1, col2, col3 = st.columns(3)
 # КОЛОНКА 1: ТИТУЛЬНИК
 with col1:
     st.header("📄 1. Титульный лист")
-    f_title = st.file_uploader("Контракт (DOCX)", type="docx")
-    # Добавили название вместо "Название"
-    t_context_area = st.text_area("ИЛИ вставьте начало контракта сюда:", height=150, key=f"t_area_{st.session_state.reset_counter}")
+    t_tab1, t_tab2 = st.tabs(["📁 Файл", "⌨️ Текст"])
     
-    if st.button("🔍 Извлечь реквизиты", use_container_width=True):
-        # ПРИОРИТЕТ: сначала текст из окна, если пусто - файл
-        txt = t_context_area.strip() if t_context_area.strip() else ""
-        if not txt and f_title:
-            txt = get_contract_start_text(f_title)
-            
-        if txt:
-            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
-            res = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": "Верни JSON реквизитов."}, {"role": "user", "content": txt}],
-                response_format={'type': 'json_object'}
-            )
-            st.session_state.t_info = json.loads(res.choices[0].message.content)
-        else:
-            st.warning("Нет данных для анализа (вставьте текст или загрузите файл)")
+    t_context = ""
+    with t_tab1:
+        f_title = st.file_uploader("Контракт (DOCX)", type="docx", key="u_title")
+        if f_title: t_context = get_contract_start_text(f_title)
+    with t_tab2:
+        m_title = st.text_area("Вставьте начало контракта", height=150, key="m_title")
+        if m_title: t_context = m_title
 
+    if st.button("🔍 Извлечь реквизиты", use_container_width=True):
+        if t_context:
+            with st.spinner("Ищем данные..."):
+                client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
+                res = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "system", "content": "Ты парсер. Верни JSON (contract_no, contract_date, ikz, project_name, customer, customer_post, customer_fio, company, director_post, director)."},
+                              {"role": "user", "content": t_context}],
+                    response_format={'type': 'json_object'}
+                )
+                st.session_state.t_info = json.loads(res.choices[0].message.content)
+        else: st.error("Нет данных!")
+
+    # --- ПРЕВЬЮ ТИТУЛЬНИКА (Редактируемое) ---
     if "t_info" in st.session_state:
+        st.info("Проверьте данные:")
         ti = st.session_state.t_info
         ti['contract_no'] = st.text_input("№", ti.get('contract_no'))
+        ti['ikz'] = st.text_input("ИКЗ", ti.get('ikz'))
         ti['customer_fio'] = st.text_input("ФИО Заказчика", ti.get('customer_fio'))
-
+        # Кнопка скачивания только титульника
+        doc_t = build_title_page(ti)
+        buf_t = io.BytesIO(); doc_t.save(buf_t)
+        st.download_button("📥 Скачать Титульник", buf_t.getvalue(), "Title.docx", use_container_width=True)
+        
 # КОЛОНКА 2: ОТЧЕТ
 with col2:
     st.header("📝 2. Отчет (ТЗ)")
@@ -370,6 +374,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
