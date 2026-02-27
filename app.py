@@ -259,9 +259,21 @@ with col1:
 # КОЛОНКА 2: ОТЧЕТ
 with col2:
     st.header("📝 2. Отчет (ТЗ)")
-    tz_tab1, tz_tab2 = st.tabs(["📁 Файл", "⌨️ Текст"])
+    tz_tab1, tz_tab2 = st.tabs(["📁 Загрузить файл", "⌨️ Вставить текст"])
     
-    tz_context = ""
+    with tz_tab1:
+        # Добавляем ключ, чтобы файл тоже можно было сбросить
+        f_tz = st.file_uploader("Техзадание (DOCX)", type="docx", key=f"u_tz_{st.session_state.reset_counter}")
+    
+    with tz_tab2:
+        # Используем reset_counter для очистки при нажатии кнопки Сброс
+        tz_area_key = f"tz_area_{st.session_state.reset_counter}"
+        m_tz_area = st.text_area(
+            "Текст техзадания:", 
+            value=st.session_state.get(tz_area_key, ""), 
+            height=150, 
+            key=tz_area_key
+        )
     
     if st.button("⚙️ Сгенерировать текст", use_container_width=True):
         # Берем текст из окна, если пусто - из файла
@@ -394,6 +406,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
