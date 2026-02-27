@@ -211,10 +211,25 @@ with col1:
     t_context = ""
     with t_tab1:
         f_title = st.file_uploader("Контракт (DOCX)", type="docx", key="u_title")
-        if f_title: t_context = get_contract_start_text(f_title)
+        t_context = "" # Инициализируем пустой строкой
+        if f_title: 
+            t_context = get_contract_start_text(f_title)
+    
     with t_tab2:
-        m_title = st.text_area("Вставьте начало контракта", height=150, key="m_title")
-        if m_title: t_context = m_title
+        # 1. Сначала определяем ключ текущего виджета
+        area_key = f"t_area_{st.session_state.reset_counter}"
+        
+        # 2. Отрисовываем виджет
+        m_title = st.text_area(
+            "ИЛИ вставьте начало контракта сюда:", 
+            value=st.session_state.get(area_key, ""), 
+            height=150, 
+            key=area_key
+        )
+    
+    # 3. Если в поле что-то вписали, обновляем контекст
+    if m_title: 
+        t_context = m_title
 
     if st.button("🔍 Извлечь реквизиты", use_container_width=True):
         if t_context:
@@ -378,6 +393,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
