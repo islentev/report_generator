@@ -221,7 +221,7 @@ with col1:
         
         # 2. Отрисовываем виджет
         m_title = st.text_area(
-            "ИЛИ вставьте начало контракта сюда:", 
+            "Вставьте начало контракта:", 
             value=st.session_state.get(area_key, ""), 
             height=150, 
             key=area_key
@@ -259,7 +259,7 @@ with col1:
 # КОЛОНКА 2: ОТЧЕТ
 with col2:
     st.header("📝 2. Отчет (ТЗ)")
-    tz_tab1, tz_tab2 = st.tabs(["📁 Загрузить файл", "⌨️ Вставить текст"])
+    tz_tab1, tz_tab2 = st.tabs(["📁 Файл", "⌨️ Текст"])
     
     with tz_tab1:
         # Добавляем ключ, чтобы файл тоже можно было сбросить
@@ -406,6 +406,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
