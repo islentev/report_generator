@@ -206,7 +206,7 @@ col1, col2, col3 = st.columns(3)
 # КОЛОНКА 1: ТИТУЛЬНИК
 with col1:
     st.header("📄 1. Титульный лист")
-    t_tab1, t_tab2 = st.tabs(["⌨️ Текст", "📁 Файл"])
+    t_tab1, t_tab2 = st.tabs(["📁 Файл", "⌨️ Текст"])
     
     t_context = ""
     with t_tab1:
@@ -259,7 +259,7 @@ with col1:
 # КОЛОНКА 2: ОТЧЕТ
 with col2:
     st.header("📝 2. Отчет (ТЗ)")
-    tz_tab1, tz_tab2 = st.tabs(["⌨️ Текст", "📁 Файл"])
+    tz_tab1, tz_tab2 = st.tabs(["📁 Файл", "⌨️ Текст"])
     
     with tz_tab1:
         # Добавляем ключ, чтобы файл тоже можно было сбросить
@@ -406,6 +406,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
