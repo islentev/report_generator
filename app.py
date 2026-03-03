@@ -104,8 +104,8 @@ def build_title_page(t):
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.add_run(f"Информационно-аналитический отчет об исполнении условий\n").bold = True
-    p.add_run(f"Контракта № {t.get('contract_no', '___')} от «{t.get('contract_date', '___')}» 2025 г.\n").bold = True
-    p.add_run(f"Идентификационный код закупки: {t.get('ikz', '___')}.")
+    p.add_run(f"Контракта № {contract_no} от «{contract_date}» 2025 г.\n").bold = True
+    p.add_run(f"Идентификационный код закупки: {ikz}").bold = True
 
     for _ in range(5): doc.add_paragraph()
     doc.add_paragraph("ТОМ I").alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -241,7 +241,21 @@ with col1:
             with st.spinner("Ищем данные..."):
                 res = client.chat.completions.create(
                     model=GEMINI_MODEL,
-                    messages=[{"role": "user", "content": f"Извлеки реквизиты в JSON из текста: {t_context}"}],
+                    messages=[{
+                        "role": "user", 
+                        "content": f"""Извлеки данные СТРОГО в формате JSON с этими ключами:
+                        'contract_no' (номер), 
+                        'contract_date' (дата), 
+                        'ikz' (ИКЗ), 
+                        'project_name' (предмет контракта), 
+                        'customer' (Заказчик), 
+                        'customer_post' (должность заказчика), 
+                        'customer_fio' (ФИО заказчика), 
+                        'company' (Исполнитель), 
+                        'director_post' (должность руководителя исполнителя), 
+                        'director' (ФИО руководителя исполнителя).
+                        Текст: {t_context}"""
+                    }],
                     response_format={ "type": "json_object" }
                 )
                 st.session_state.t_info = json.loads(res.choices[0].message.content)
@@ -381,6 +395,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
