@@ -3,12 +3,16 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.text import WD_COLOR_INDEX
-import google.generativeai as genai
+from openai import OpenAI
+client = OpenAI(
+  base_url="https://openrouter.ai/api/v1",
+  api_key=st.secrets["OPENROUTER_API_KEY"], # Сюда вставь свой новый ключ
+)
+GEMINI_MODEL = "google/gemini-pro-1.5"
 import io
 import json
 import re
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-model = genai.GenerativeModel('gemini-1.5-pro')
+
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
@@ -60,24 +64,27 @@ def smart_generate_step_strict(section_text, requirements_text):
     ТРЕБОВАНИЯ К ДОКУМЕНТАМ: {requirements_text}"""
 
     # Шаг 1: Генерация
-    res = model.generate_content(system_prompt + f"\n\nФРАГМЕНТ ТЗ:\n{section_text}")
-    draft = res.text
+    res = client.chat.completions.create(
+      model=GEMINI_MODEL,
+      messages=[{"role": "user", "content": prompt}]
+    )
+    draft = res.choices[0].message.content
 
     # Шаг 2: ЖЕСТКИЙ КОНТРОЛЬ
-    v_prompt = f"Сравни ТЗ и Отчет. Если есть ошибки или пропуски цифр, напиши их. Если всё ок, пиши 'ОШИБОК: 0'.\nТЗ: {section_text}\nОТЧЕТ: {draft}"
-    v_res = model.generate_content(v_prompt)
+    v_prompt = f"Сравни ТЗ и Отчет. Если есть ошибки, напиши их. Если всё ок, пиши 'ОШИБОК: 0'.\nТЗ: {section_text}\nОТЧЕТ: {draft}"
+    v_res = client.chat.completions.create(
+        model=GEMINI_MODEL,
+        messages=[{"role": "user", "content": v_prompt}]
+    )
+    v_text = v_res.choices[0].message.content
     
     # Шаг 3: Исправление (если инспектор нашел брак)
-    if "ОШИБОК: 0" not in v_res.text:
-        fix_prompt = f"""
-        {system_prompt}
-        ДОБАВЬ УПУЩЕННЫЕ ДАННЫЕ И ИСПРАВЬ ПУНКТУАЦИЮ.
-        Оригинал ТЗ: {section_text}
-        Твой черновик: {draft}
-        Замечания инспектора: {v_res.text}
-        """
-        fix = model.generate_content(fix_prompt)
-        return fix.text
+    if "ОШИБОК: 0" not in v_text:
+        fix = client.chat.completions.create(
+            model=GEMINI_MODEL,
+            messages=[{"role": "user", "content": f"Исправь отчет по замечаниям: {v_text}\nТекст: {draft}"}]
+        )
+        return fix.choices[0].message.content
     return draft
 
 # --- 3. СБОРКА ДОКУМЕНТА (ТВОЕ ОФОРМЛЕНИЕ) ---
@@ -225,11 +232,12 @@ with col1:
     if st.button("🔍 Извлечь реквизиты", use_container_width=True):
         if t_context:
             with st.spinner("Ищем данные..."):
-                res = model.generate_content(
-                    f"Ты парсер реквизитов. Извлеки реквизиты в JSON (contract_no, contract_date, ikz, project_name, customer, customer_post, customer_fio, company, director_post, director) из этого текста: {t_context}",
-                    generation_config={"response_mime_type": "application/json"}
+                res = client.chat.completions.create(
+                    model=GEMINI_MODEL,
+                    messages=[{"role": "user", "content": f"Извлеки реквизиты в JSON из текста: {t_context}"}],
+                    response_format={ "type": "json_object" }
                 )
-                st.session_state.t_info = json.loads(res.text)
+                st.session_state.t_info = json.loads(res.choices[0].message.content)
         else: st.error("Нет данных!")
 
     # --- ПРЕВЬЮ ТИТУЛЬНИКА (Редактируемое) ---
@@ -271,10 +279,11 @@ with col2:
             
         if tz_content:
             st.session_state.raw_tz_source = tz_content  # СОХРАНЯЕМ ДЛЯ ПОШАГОВОЙ СБОРКИ
-            seg_res = model.generate_content(
-                f"Раздели текст ТЗ на логические блоки (пункты или строки таблицы). Разделяй блоки тегом [END_BLOCK]. Сохраняй все цифры.\nТекст ТЗ: {tz_content}"
+            seg_res = client.chat.completions.create(
+                model=GEMINI_MODEL,
+                messages=[{"role": "user", "content": f"Раздели на блоки с тегом [END_BLOCK]: {tz_content}"}]
             )
-            steps = [s.strip() for s in seg_res.text.split('[END_BLOCK]') if s.strip()]
+            steps = [s.strip() for s in seg_res.choices[0].message.content.split('[END_BLOCK]') if s.strip()]
 
             instruction = """Роль и контекст:
             Ты — ассистент юриста по договорной работе. Перед тобой текст Технического Задания (ТЗ), который был написан в будущем времени как план работ. 
@@ -289,7 +298,11 @@ with col2:
             Выведи только чистый текст отчета."""
             
             # Вызываем Gemini с твоей инструкцией и текстом ТЗ
-            res = model.generate_content(f"{instruction}\n\nТРАНСФОРМИРУЙ ЭТО ТЗ В ОТЧЕТ:\n{tz_content}")
+            res = client.chat.completions.create(
+                model=GEMINI_MODEL,
+                messages=[{"role": "user", "content": f"{instruction}\n\n{tz_content}"}]
+            )
+            st.session_state.raw_report_body = res.choices[0].message.content
             
             # Сохраняем результат (у Gemini это res.text)
             st.session_state.raw_report_body = res.text
@@ -316,8 +329,11 @@ with col3:
     st.header("📋 3. Требования")
     if st.button("🔍 Выделить требования", use_container_width=True):
         if "raw_tz_source" in st.session_state:
-            res = model.generate_content(f"Выпиши требования к документам из этого ТЗ: {st.session_state.raw_tz_source}")
-            st.session_state.raw_requirements = res.text
+            res = client.chat.completions.create(
+                model=GEMINI_MODEL,
+                messages=[{"role": "user", "content": f"Выпиши требования к документам: {st.session_state.raw_tz_source}"}]
+            )
+            st.session_state.raw_requirements = res.choices[0].message.content
 
     if "raw_requirements" in st.session_state:
         st.session_state.raw_requirements = st.text_area("Требования:", st.session_state.raw_requirements, height=300)
@@ -358,3 +374,4 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
