@@ -7,3 +7,4 @@ gspread
 python-docx
 docx2txt
 openai
+pip install -U google-generativeai
