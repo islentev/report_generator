@@ -1,10 +1,4 @@
 streamlit
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-api-python-client
-gspread
 python-docx
-docx2txt
+google-generativeai
 openai
-pip install -U google-generativeai
