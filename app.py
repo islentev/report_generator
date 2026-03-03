@@ -6,7 +6,7 @@ from docx.enum.text import WD_COLOR_INDEX
 from openai import OpenAI
 client = OpenAI(
   base_url="https://openrouter.ai/api/v1",
-  api_key=st.secrets["OPENROUTER_API_KEY"], # Сюда вставь свой новый ключ
+  api_key=st.secrets["OPENROUTER_API_KEY"]
 )
 GEMINI_MODEL = "google/gemini-pro-1.5"
 import io
@@ -374,4 +374,5 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
