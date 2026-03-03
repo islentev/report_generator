@@ -98,40 +98,71 @@ def smart_generate_step_strict(section_text, requirements_text):
 
 def build_title_page(t):
     doc = Document()
+    
+    # Настройка узких полей (чтобы точно влезло)
+    sections = doc.sections
+    for section in sections:
+        section.top_margin = Pt(36)    # 1.27 см
+        section.bottom_margin = Pt(36)
+        section.left_margin = Pt(72)   # 2.54 см
+        section.right_margin = Pt(36)
+
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
     
-    # ИСПРАВЛЕНИЕ: Извлекаем переменные из словаря t, прежде чем использовать их
+    # Сбор данных [cite: 151]
     contract_no = t.get('contract_no', '___')
     contract_date = t.get('contract_date', '___')
-    ikz = t.get('ikz', '___')
+    ikz = t.get('ikz', '___________')
 
+    # Шапка 
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.add_run(f"Информационно-аналитический отчет об исполнении условий\n").bold = True
+    p.add_run("Информационно-аналитический отчет об исполнении условий\n").bold = True
     p.add_run(f"Контракта № {contract_no} от «{contract_date}» 2025 г.\n").bold = True
     p.add_run(f"Идентификационный код закупки: {ikz}").bold = True
 
-    for _ in range(5): doc.add_paragraph()
+    # Уменьшенный отступ перед ТОМ I
+    for _ in range(3): doc.add_paragraph() 
     doc.add_paragraph("ТОМ I").alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    for label, val in [("Наименование предмета КОНТРАКТА :", t.get('project_name')), ("Заказчик:", t.get('customer')), ("Исполнитель:", t.get('company'))]:
-        p_l = doc.add_paragraph(); p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_l.add_run(label).bold = True
-        p_v = doc.add_paragraph(); p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Предмет, Заказчик, Исполнитель [cite: 3-8, 153-158]
+    for label, val in [
+        ("Наименование предмета КОНТРАКТА:", t.get('project_name')),
+        ("Заказчик:", t.get('customer')),
+        ("Исполнитель:", t.get('company'))
+    ]:
+        p_l = doc.add_paragraph()
+        p_l.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_l.add_run(f"\n{label}").bold = True
+        
+        p_v = doc.add_paragraph()
+        p_v.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        # Ограничиваем длину текста предмета, если он слишком длинный
         p_v.add_run(str(val)).italic = True
 
-    for _ in range(5): doc.add_paragraph()
+    # Динамический отступ перед подписями (уменьшен до 4)
+    for _ in range(4): doc.add_paragraph()
+    
+    # Таблица подписей [cite: 9, 159]
     tab = doc.add_table(rows=2, cols=2)
+    tab.autofit = True
 
-    # Делаем первую букву заглавной
-    cust_post = str(t.get('customer_post', 'Должность')).capitalize()
-    exec_post = str(t.get('director_post', 'Должность')).capitalize()
+    cust_post = str(t.get('customer_post', 'Заказчик')).capitalize()
+    exec_post = str(t.get('director_post', 'Исполнитель')).capitalize()
+    cust_fio = format_fio_short(t.get('customer_fio'))
+    exec_fio = format_fio_short(t.get('director'))
 
-    # Вставляем именно переменные cust_post и exec_post
-    tab.rows[0].cells[0].text = f"Отчет принят Заказчиком\n{cust_post}\n\n___________ / {format_fio_short(t.get('customer_fio'))}"
-    tab.rows[0].cells[1].text = f"Отчет передан Исполнителем\n{exec_post}\n\n___________ / {format_fio_short(t.get('director'))}"
+    # Левая ячейка (Заказчик)
+    p1 = tab.rows[0].cells[0].paragraphs[0]
+    p1.add_run(f"Отчет принят Заказчиком\n{cust_post}\n\n___________ / {cust_fio}")
+    
+    # Правая ячейка (Исполнитель)
+    p2 = tab.rows[0].cells[1].paragraphs[0]
+    p2.add_run(f"Отчет передан Исполнителем\n{exec_post}\n\n___________ / {exec_fio}")
+
+    # М.П. (нижняя строка таблицы)
     tab.rows[1].cells[0].text = "м.п."
     tab.rows[1].cells[1].text = "м.п."
 
@@ -401,6 +432,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
