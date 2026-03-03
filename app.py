@@ -305,7 +305,7 @@ with col2:
             st.session_state.raw_report_body = res.choices[0].message.content
             
             # Сохраняем результат (у Gemini это res.text)
-            st.session_state.raw_report_body = res.text
+            st.session_state.raw_report_body = res.choices[0].message.content
             
             final_text_parts = []
             pb = st.progress(0)
@@ -317,7 +317,7 @@ with col2:
                 final_text_parts.append(part)
                 pb.progress((i + 1) / len(steps))
             
-            st.session_state.raw_report_body = res.text
+            st.session_state.raw_report_body = res.choices[0].message.content
         else:
             st.warning("Данные ТЗ отсутствуют")
 
@@ -374,6 +374,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
