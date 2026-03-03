@@ -3,10 +3,12 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.text import WD_COLOR_INDEX
-from openai import OpenAI
+import google.generativeai as genai
 import io
 import json
 import re
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+model = genai.GenerativeModel('gemini-1.5-pro')
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
@@ -48,7 +50,7 @@ def clean_markdown(text):
 
 # --- 2. УМНАЯ ГЕНЕРАЦИЯ (ЛОГИКА ВНУТРИ) ---
 
-def smart_generate_step_strict(client, section_text, requirements_text):
+def smart_generate_step_strict(section_text, requirements_text):
     system_prompt = f"""Ты - юридический редактор. Перепиши пункты ТЗ в Отчет.
     ПРАВИЛА:
     1. ВРЕМЯ: У заголовком - настоящее, у текста - СТРОГО ПРОШЕДШЕЕ ('организовано', 'оказано', 'размещено').
@@ -58,35 +60,24 @@ def smart_generate_step_strict(client, section_text, requirements_text):
     ТРЕБОВАНИЯ К ДОКУМЕНТАМ: {requirements_text}"""
 
     # Шаг 1: Генерация
-    res = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{"role": "system", "content": system_prompt},
-                  {"role": "user", "content": f"Сделай отчет по этому куску ТЗ:\n{section_text}"}],
-        temperature=0.1
-    )
-    draft = res.choices[0].message.content
+    res = model.generate_content(system_prompt + f"\n\nФРАГМЕНТ ТЗ:\n{section_text}")
+    draft = res.text
 
     # Шаг 2: ЖЕСТКИЙ КОНТРОЛЬ
-    v_res = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{"role": "system", "content": """Ты — контролер качества. 
-        Сравни Фрагмент ТЗ и Текст Отчета. 
-        Твоя цель: найти упущенные цифры, технические параметры или оборванные предложения.
-        Если всё на месте и написано в прошедшем времени — пиши 'ОШИБОК: 0'. 
-        Если что-то пропало — перечисли, что именно."""},
-                  {"role": "user", "content": f"ТЗ: {section_text}\nОТЧЕТ: {draft}"}],
-        temperature=0
-    )
+    v_prompt = f"Сравни ТЗ и Отчет. Если есть ошибки или пропуски цифр, напиши их. Если всё ок, пиши 'ОШИБОК: 0'.\nТЗ: {section_text}\nОТЧЕТ: {draft}"
+    v_res = model.generate_content(v_prompt)
     
     # Шаг 3: Исправление (если инспектор нашел брак)
-    if "ОШИБОК: 0" not in v_res.choices[0].message.content:
-        fix = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[{"role": "system", "content": system_prompt + "\nДОБАВЬ УПУЩЕННЫЕ ДАННЫЕ И ИСПРАВЬ ПУНКТУАЦИЮ."},
-                      {"role": "user", "content": f"ТЗ: {section_text}\nТвой черновик: {draft}\nЗамечания инспектора: {v_res.choices[0].message.content}"}],
-            temperature=0.1
-        )
-        return fix.choices[0].message.content
+    if "ОШИБОК: 0" not in v_res.text:
+        fix_prompt = f"""
+        {system_prompt}
+        ДОБАВЬ УПУЩЕННЫЕ ДАННЫЕ И ИСПРАВЬ ПУНКТУАЦИЮ.
+        Оригинал ТЗ: {section_text}
+        Твой черновик: {draft}
+        Замечания инспектора: {v_res.text}
+        """
+        fix = model.generate_content(fix_prompt)
+        return fix.text
     return draft
 
 # --- 3. СБОРКА ДОКУМЕНТА (ТВОЕ ОФОРМЛЕНИЕ) ---
@@ -234,14 +225,11 @@ with col1:
     if st.button("🔍 Извлечь реквизиты", use_container_width=True):
         if t_context:
             with st.spinner("Ищем данные..."):
-                client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
-                res = client.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[{"role": "system", "content": "Ты парсер. Верни JSON (contract_no, contract_date, ikz, project_name, customer, customer_post, customer_fio, company, director_post, director)."},
-                              {"role": "user", "content": t_context}],
-                    response_format={'type': 'json_object'}
+                res = model.generate_content(
+                    f"Ты парсер реквизитов. Извлеки реквизиты в JSON (contract_no, contract_date, ikz, project_name, customer, customer_post, customer_fio, company, director_post, director) из этого текста: {t_context}",
+                    generation_config={"response_mime_type": "application/json"}
                 )
-                st.session_state.t_info = json.loads(res.choices[0].message.content)
+                st.session_state.t_info = json.loads(res.text)
         else: st.error("Нет данных!")
 
     # --- ПРЕВЬЮ ТИТУЛЬНИКА (Редактируемое) ---
@@ -283,72 +271,40 @@ with col2:
             
         if tz_content:
             st.session_state.raw_tz_source = tz_content  # СОХРАНЯЕМ ДЛЯ ПОШАГОВОЙ СБОРКИ
-            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
-            with st.spinner("Анализирую структуру документа..."):
-                seg_res = client.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[{"role": "system", "content": "Раздели текст ТЗ на логические блоки (пункты или строки таблицы). Каждый блок должен содержать полный набор требований для этого пункта. Разделяй блоки специальным тегом [END_BLOCK]. Сохраняй все цифры и подпункты."},
-                              {"role": "user", "content": tz_content}]
-                )
-                # Теперь у нас есть список блоков, независимо от того, была это таблица или текст
-                steps = [s.strip() for s in seg_res.choices[0].message.content.split('[END_BLOCK]') if s.strip()]
-              
-            res = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{
-                    "role": "system", 
-                    "content": """Роль и контекст:
-                    Ты — ассистент юриста по договорной работе. Перед тобой текст Технического Задания (ТЗ), который был написан в будущем времени как план работ. Сейчас его нужно превратить в черновик отчета о выполнении. Твоя задача — действовать как автомат по замене времени и удалению лишних слов, не меняя структуру и терминологию документа. Объём документа может быть очень большим (до 20 страниц) — это нормально, ты должен сохранить весь текст полностью, ничего не выбрасывая и не пересказывая.
-                    
-                    Инструкция (Что нужно сделать):
-                    Необходимо полностью переработать текст ТЗ в текст отчета, выполненного в прошедшем времени, со следующими важными исключениями.
-                    
-                    Правила обработки (Набор правил):
-                    
-                    Неприкосновенность заголовков (Важно!): Все заголовки пунктов и подпунктов ТЗ должны остаться в настоящем времени (как в оригинале). Их менять нельзя.
-                    
-                    Пример: Заголовок «Предоставление транспортных услуг...» должен остаться без изменений.
-                    
-                    Применяй это правило ко всем уровням заголовков.
-                    
-                    Основное время (Тело пунктов): Весь описательный текст, следующий за заголовком (внутри пункта), нужно переписать в прошедшее время.
-                    
-                    Пример: «Исполнитель организует доставку...» -> «Исполнитель организовал доставку...».
-                    
-                    Чистка текста (Удаление модального мусора): В отчете не должно быть слов, указывающих на долженствование или ограничения из ТЗ. Их нужно удалять или заменять, не искажая сути:
-                    
-                    Слова для удаления: должен, обязан, нужно, необходимо, следует.
-                    
-                    Пример: «Исполнитель обязан предоставить отчет» -> «Исполнитель предоставил отчет».
-                    
-                    Слова для удаления (если они не влияют на цифры): более, менее, не более, не менее, свыше (часто они просто указывают на план, в отчете важны конкретные цифры).
-                    
-                    Пример: «Поставлено не менее 10 ящиков» -> «Поставлено 10 ящиков» (если факт совпадает с минимумом; если поставлено больше, лучше сохранить факт: «Поставлено 12 ящиков»).
-                    
-                    Неизменность данных и объёма: Все, что не является глаголами или мусорными словами из п.3, должно остаться нетронутым:
-                    
-                    Сроки (числа), адреса, имена, названия организаций, специфические термины, номенклатурные номера — все остается как в оригинале ТЗ.
-                    
-                    Важно: ни в коем случае не сокращай текст, не убирай предложения, не пересказывай своими словами. Сохраняй исходный объём и все детали, даже если текст очень длинный. Просто заменяй времена и удаляй указанные слова.
-                    
-                    Работа с описаниями процессов: Длинные описания того, как надо делать, превращаются в описание того, как было сделано.
-                    
-                    Формат вывода:
-                    Выведи полностью переработанный текст. Начинай с первого заголовка документа. Не добавляй никаких вступлений, комментариев или пояснений в квадратных скобках. Только чистый текст отчета."""
-                },
-                {"role": "user", "content": f"ТРАНСФОРМИРУЙ ЭТО ТЗ В ОТЧЕТ:\n\n{tz_content}"}]
+            seg_res = model.generate_content(
+                f"Раздели текст ТЗ на логические блоки (пункты или строки таблицы). Разделяй блоки тегом [END_BLOCK]. Сохраняй все цифры.\nТекст ТЗ: {tz_content}"
             )
+            steps = [s.strip() for s in seg_res.text.split('[END_BLOCK]') if s.strip()]
+
+            instruction = """Роль и контекст:
+            Ты — ассистент юриста по договорной работе. Перед тобой текст Технического Задания (ТЗ), который был написан в будущем времени как план работ. 
+            Сейчас его нужно превратить в черновик отчета о выполнении. Твоя задача — действовать как автомат по замене времени и удалению лишних слов, не меняя структуру и терминологию документа. 
+
+            Инструкция:
+            1. ВРЕМЯ: СТРОГО ПРОШЕДШЕЕ (организовано, оказано, размещено).
+            2. ЗАПРЕТ: Слова 'должен', 'обязан', 'будет', 'необходимо' КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНЫ.
+            3. НЕПРИКОСНОВЕННОСТЬ ЗАГОЛОВКОВ: Заголовки пунктов оставляй как в ТЗ.
+            4. ТОЧНОСТЬ: Сохраняй все цифры, площади и сроки. Не сокращай текст!
+            
+            Выведи только чистый текст отчета."""
+            
+            # Вызываем Gemini с твоей инструкцией и текстом ТЗ
+            res = model.generate_content(f"{instruction}\n\nТРАНСФОРМИРУЙ ЭТО ТЗ В ОТЧЕТ:\n{tz_content}")
+            
+            # Сохраняем результат (у Gemini это res.text)
+            st.session_state.raw_report_body = res.text
+            
             final_text_parts = []
             pb = st.progress(0)
             status_text = st.empty()
             
             for i, step in enumerate(steps):
                 status_text.text(f"Обработка блока {i+1} из {len(steps)}...")
-                part = smart_generate_step_strict(client, step, st.session_state.get('raw_requirements', ''))
+                part = smart_generate_step_strict(step, st.session_state.get('raw_requirements', ''))
                 final_text_parts.append(part)
                 pb.progress((i + 1) / len(steps))
             
-            st.session_state.raw_report_body = res.choices[0].message.content
+            st.session_state.raw_report_body = res.text
         else:
             st.warning("Данные ТЗ отсутствуют")
 
@@ -360,12 +316,8 @@ with col3:
     st.header("📋 3. Требования")
     if st.button("🔍 Выделить требования", use_container_width=True):
         if "raw_tz_source" in st.session_state:
-            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
-            res = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content": f"Выпиши требования к документам из ТЗ: {st.session_state.raw_tz_source}"}]
-            )
-            st.session_state.raw_requirements = res.choices[0].message.content
+            res = model.generate_content(f"Выпиши требования к документам из этого ТЗ: {st.session_state.raw_tz_source}")
+            st.session_state.raw_requirements = res.text
 
     if "raw_requirements" in st.session_state:
         st.session_state.raw_requirements = st.text_area("Требования:", st.session_state.raw_requirements, height=300)
@@ -384,14 +336,14 @@ with f_col1:
 with f_col2:
     if st.button("🚀 ЗАПУСТИТЬ ПОШАГОВУЮ СБОРКУ", use_container_width=True):
         if "t_info" in st.session_state and st.session_state.get('raw_tz_source'):
-            client = OpenAI(api_key=st.secrets["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
+            
             # Разрезаем по пунктам типа 1.1., 2.1.
             steps = [s.strip() for s in re.split(r'\n(?=\d+\.\d+)', st.session_state.raw_tz_source) if s.strip()]
             
             final_text_parts = []
             pb = st.progress(0)
             for i, step in enumerate(steps):
-                part = smart_generate_step_strict(client, step, st.session_state.get('raw_requirements', ''))
+                part = smart_generate_step_strict(step, st.session_state.get('raw_requirements', ''))
                 final_text_parts.append(part)
                 pb.progress((i + 1) / len(steps))
             
@@ -406,24 +358,3 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
