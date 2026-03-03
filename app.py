@@ -8,7 +8,7 @@ client = OpenAI(
   base_url="https://openrouter.ai/api/v1",
   api_key=st.secrets["OPENROUTER_API_KEY"]
 )
-GEMINI_MODEL = "google/gemini-pro-1.5"
+GEMINI_MODEL = "google/gemini-2.5-pro"
 import io
 import json
 import re
@@ -374,6 +374,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
