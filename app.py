@@ -63,10 +63,12 @@ def smart_generate_step_strict(section_text, requirements_text):
     4. ПУНКТУАЦИЯ: Соблюдай правила русского языка. Не обрывай предложения.
     ТРЕБОВАНИЯ К ДОКУМЕНТАМ: {requirements_text}"""
 
+    full_prompt = f"{system_prompt}\n\nТРАНСФОРМИРУЙ ЭТОТ КУСОК ТЗ В ОТЧЕТ:\n{section_text}"
+
     # Шаг 1: Генерация
     res = client.chat.completions.create(
       model=GEMINI_MODEL,
-      messages=[{"role": "user", "content": prompt}]
+      messages=[{"role": "user", "content": full_prompt}]
     )
     draft = res.choices[0].message.content
 
@@ -82,7 +84,7 @@ def smart_generate_step_strict(section_text, requirements_text):
     if "ОШИБОК: 0" not in v_text:
         fix = client.chat.completions.create(
             model=GEMINI_MODEL,
-            messages=[{"role": "user", "content": f"Исправь отчет по замечаниям: {v_text}\nТекст: {draft}"}]
+            messages=[{"role": "user", "content": fix_prompt}]
         )
         return fix.choices[0].message.content
     return draft
@@ -374,6 +376,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
