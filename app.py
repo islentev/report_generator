@@ -101,6 +101,12 @@ def build_title_page(t):
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     style.font.size = Pt(12)
+    
+    # ИСПРАВЛЕНИЕ: Извлекаем переменные из словаря t, прежде чем использовать их
+    contract_no = t.get('contract_no', '___')
+    contract_date = t.get('contract_date', '___')
+    ikz = t.get('ikz', '___')
+
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.add_run(f"Информационно-аналитический отчет об исполнении условий\n").bold = True
@@ -395,6 +401,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
