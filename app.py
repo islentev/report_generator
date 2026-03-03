@@ -6,7 +6,11 @@ from docx.enum.text import WD_COLOR_INDEX
 from openai import OpenAI
 client = OpenAI(
   base_url="https://openrouter.ai/api/v1",
-  api_key=st.secrets["OPENROUTER_API_KEY"]
+  api_key=st.secrets["OPENROUTER_API_KEY"],
+  default_headers={
+    "HTTP-Referer": "https://report-generator.streamlit.app", # Твой адрес
+    "X-Title": "Report Generator"
+  }
 )
 GEMINI_MODEL = "anthropic/claude-3.5-sonnet"
 import io
@@ -82,6 +86,7 @@ def smart_generate_step_strict(section_text, requirements_text):
     
     # Шаг 3: Исправление (если инспектор нашел брак)
     if "ОШИБОК: 0" not in v_text:
+        fix_prompt = f"{system_prompt}\nИСПРАВЬ ОШИБКИ: {v_text}\nТЗ: {section_text}\nЧЕРНОВИК: {draft}"
         fix = client.chat.completions.create(
             model=GEMINI_MODEL,
             messages=[{"role": "user", "content": fix_prompt}]
@@ -376,6 +381,7 @@ if "full_file" in st.session_state:
     st.download_button("📥 Скачать обычный", st.session_state.full_file, "Report.docx")
 if "smart_file" in st.session_state:
     st.download_button("📥 СКАЧАТЬ УМНЫЙ ОТЧЕТ", st.session_state.smart_file, "Smart_Report.docx")
+
 
 
 
